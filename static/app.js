@@ -5,7 +5,7 @@
 // ==================== 全局状态 ====================
 const state = {
     currentPage: 1,
-    pageSize: 20,
+    pageSize: 10,
     totalPages: 1,
     total: 0,
     search: '',
@@ -192,6 +192,178 @@ function formatPercent(val) {
     return (val * 100).toFixed(1) + '%';
 }
 
+function calcF1Score(tp, fp, fn) {
+    const tpNum = Number(tp || 0);
+    const fpNum = Number(fp || 0);
+    const fnNum = Number(fn || 0);
+    const denominator = (2 * tpNum) + fpNum + fnNum;
+    if (denominator <= 0) return 0;
+    return (2 * tpNum) / denominator;
+}
+
+function getOverviewValueClass(label) {
+    const mapping = {
+        '已标注/数据量': 'overview-value-blue',
+        '总量': 'overview-value-slate',
+        '已标注': 'overview-value-blue',
+        '算法准确率': 'overview-value-indigo',
+        '正确查全率': 'overview-value-emerald',
+        '错误查全率': 'overview-value-amber',
+        '正确查准率': 'overview-value-cyan',
+        '错误查准率': 'overview-value-orange',
+        'F1 Score': 'overview-value-violet',
+        'TP': 'overview-value-emerald',
+        'FN': 'overview-value-amber',
+        'FP': 'overview-value-rose',
+        'TN': 'overview-value-sky',
+        '排队中': 'overview-value-amber',
+        '执行中': 'overview-value-blue',
+        '成功': 'overview-value-emerald',
+        '失败': 'overview-value-rose'
+    };
+    return mapping[label] || 'overview-value-slate';
+}
+
+function getStatsToneClass(label) {
+    const mapping = {
+        '总量': 'stats-tone-slate',
+        '已标注': 'stats-tone-blue',
+        '算法准确率': 'stats-tone-indigo',
+        '正确查全率': 'stats-tone-emerald',
+        '错误查全率': 'stats-tone-amber',
+        '正确查准率': 'stats-tone-cyan',
+        '错误查准率': 'stats-tone-orange',
+        'F1 Score': 'stats-tone-violet',
+        'TP': 'stats-tone-emerald',
+        'FN': 'stats-tone-amber',
+        'FP': 'stats-tone-rose',
+        'TN': 'stats-tone-sky',
+        '排队中': 'stats-tone-amber',
+        '执行中': 'stats-tone-blue',
+        '成功': 'stats-tone-emerald',
+        '失败': 'stats-tone-rose'
+    };
+    return mapping[label] || 'stats-tone-slate';
+}
+
+function clampRate(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return 0;
+    return Math.max(0, Math.min(1, numeric));
+}
+
+function renderOverviewMetricCard(label, value, tooltip, isPercent = true) {
+    return `<div class="overview-stat-card metric-help" data-tooltip="${escapeHtml(tooltip || '')}">
+        <span class="overview-metric-label">${escapeHtml(label)}</span>
+        <strong class="overview-metric-value ${getOverviewValueClass(label)}">${escapeHtml(isPercent ? formatPercent(value) : value)}</strong>
+    </div>`;
+}
+
+function renderOverviewMetricsCard(data, f1Score, hasData) {
+    const metrics = [
+        ['已标注/数据量', `${data.annotated || 0}/${data.total || 0}`, `${statHelpText.annotated}\n${statHelpText.total}`, false],
+        ['算法准确率', data.accuracy, statHelpText.accuracy],
+        ['正确查全率', data.positive_recall, statHelpText.positive_recall],
+        ['错误查全率', data.negative_recall, statHelpText.negative_recall],
+        ['正确查准率', data.positive_precision, statHelpText.positive_precision],
+        ['错误查准率', data.negative_precision, statHelpText.negative_precision],
+        ['F1 Score', f1Score, statHelpText.f1_score],
+    ];
+    const metricGrid = hasData
+        ? metrics.map(([label, value, tooltip, isPercent = true]) => (
+            renderOverviewMetricCard(label, value, tooltip, isPercent)
+        )).join('')
+        : `<div class="overview-empty-state">
+            <div class="overview-empty-title">暂无统计数据</div>
+            <div class="overview-empty-text">上传并标注数据后，这里会展示当前组合的核心评估指标。</div>
+        </div>`;
+
+    return `<section class="overview-strip-group overview-strip-metrics">
+        ${metricGrid}
+    </section>`;
+}
+
+function renderConfusionMatrix(tp, fn, fp, tn) {
+    return `<section class="overview-strip-group overview-strip-block">
+        <div class="overview-strip-grid overview-strip-grid-four" aria-label="匹配类型">
+            <div class="overview-strip-mini metric-help" data-tooltip="TP：预测正确且答案正确">
+                <span class="overview-matrix-label">TP</span>
+                <strong class="overview-matrix-value overview-value-emerald">${escapeHtml(tp)}</strong>
+            </div>
+            <div class="overview-strip-mini metric-help" data-tooltip="FN：漏判为错误">
+                <span class="overview-matrix-label">FN</span>
+                <strong class="overview-matrix-value overview-value-amber">${escapeHtml(fn)}</strong>
+            </div>
+            <div class="overview-strip-mini metric-help" data-tooltip="FP：误判为正确">
+                <span class="overview-matrix-label">FP</span>
+                <strong class="overview-matrix-value overview-value-rose">${escapeHtml(fp)}</strong>
+            </div>
+            <div class="overview-strip-mini metric-help" data-tooltip="TN：预测错误且答案错误">
+                <span class="overview-matrix-label">TN</span>
+                <strong class="overview-matrix-value overview-value-sky">${escapeHtml(tn)}</strong>
+            </div>
+        </div>
+    </section>`;
+}
+
+function renderTaskStatusCard(taskSummary) {
+    const items = [
+        ['排队中', taskSummary.pending || 0, statHelpText.task_pending],
+        ['执行中', taskSummary.running || 0, statHelpText.task_running],
+        ['成功', taskSummary.success || 0, statHelpText.task_success],
+        ['失败', taskSummary.failed || 0, statHelpText.task_failed],
+    ];
+    return `<section class="overview-strip-group overview-strip-block">
+        <div class="overview-strip-grid overview-strip-grid-four" aria-label="任务状态">
+            ${items.map(([label, value, tooltip]) => `
+                <div class="overview-strip-mini metric-help" data-tooltip="${escapeHtml(tooltip || '')}">
+                    <span class="overview-task-label">${escapeHtml(label)}</span>
+                    <strong class="overview-task-value ${getOverviewValueClass(label)}">${escapeHtml(value)}</strong>
+                </div>
+            `).join('')}
+        </div>
+    </section>`;
+}
+
+function renderStatsOverview(data, taskSummary) {
+    const panel = document.getElementById('statsPanel');
+    if (!panel) return;
+    const annotated = Number(data.annotated || 0);
+    const tp = Number(data.tp || 0);
+    const fn = Number(data.fn || 0);
+    const fp = Number(data.fp || 0);
+    const tn = Number(data.tn || 0);
+    const f1Score = data.f1_score !== undefined && data.f1_score !== null
+        ? Number(data.f1_score)
+        : calcF1Score(tp, fp, fn);
+    const hasData = annotated > 0;
+
+    panel.className = 'stats-overview';
+    panel.innerHTML = `
+        ${renderOverviewMetricsCard(data, f1Score, hasData)}
+        ${renderConfusionMatrix(tp, fn, fp, tn)}
+        ${renderTaskStatusCard(taskSummary)}
+    `;
+    applyMetricHelpTitles();
+}
+
+function renderStatsOverviewLoading() {
+    const panel = document.getElementById('statsPanel');
+    if (!panel) return;
+    panel.className = 'stats-overview is-loading';
+    panel.innerHTML = `
+        <div class="overview-card overview-card-loading">
+            <div class="overview-skeleton overview-skeleton-metrics"></div>
+        </div>
+        <div class="overview-card overview-card-loading">
+            <div class="overview-skeleton overview-skeleton-grid"></div>
+        </div>
+        <div class="overview-card overview-card-loading">
+            <div class="overview-skeleton overview-skeleton-pills"></div>
+        </div>
+    `;
+}
+
 function syntaxHighlightJson(json) {
     if (typeof json !== 'string') {
         json = JSON.stringify(json, null, 2);
@@ -285,7 +457,6 @@ document.addEventListener('DOMContentLoaded', async function () {
     document.getElementById('modelSelect').addEventListener('change', async function () {
         state.currentModel = this.value;
         state.currentPage = 1;
-        document.getElementById('statModel').textContent = getCurrentComboName() || '-';
         await reloadCurrentCombo('正在切换模型...');
     });
 
@@ -335,7 +506,6 @@ function applyDefaultSettings() {
         localStorage.setItem('comboConcurrency', JSON.stringify(state.comboConcurrency));
     }
     syncConcurrencyInput();
-    document.getElementById('statModel').textContent = getCurrentComboName() || '-';
 }
 
 function openDefaultSettingsModal() {
@@ -400,7 +570,6 @@ async function loadStrategies() {
 async function handleStrategyChange(value) {
     state.currentStrategy = value;
     state.currentPage = 1;
-    document.getElementById('statModel').textContent = getCurrentComboName() || '-';
     await reloadCurrentCombo('正在切换方案...');
 }
 
@@ -478,7 +647,6 @@ async function loadModels(selectModelFileName) {
                 state.currentModel = firstName;
             }
         }
-        document.getElementById('statModel').textContent = getCurrentComboName() || '-';
         renderModelList(selectModelFileName);
     } catch (e) {
         console.error('加载模型列表失败', e);
@@ -2468,6 +2636,9 @@ function renderStatsCard(model, strategy, combo, data) {
     const safeCombo = escapeJs(combo);
     const selected = state.selectedCombos.has(combo);
     const running = !!state.comboQueues[combo]?.active;
+    const f1Value = data.f1_score !== undefined && data.f1_score !== null
+        ? data.f1_score
+        : calcF1Score(data.tp || 0, data.fp || 0, data.fn || 0);
     return `<div class="combo-card ${selected ? 'combo-card-selected' : ''}">
         <div class="combo-card-head">
             <div>
@@ -2494,7 +2665,7 @@ function renderStatsCard(model, strategy, combo, data) {
             ${renderStatsMetricItem('正确查全率', formatPercent(data.positive_recall), statHelpText.positive_recall)}
             ${renderStatsMetricItem('错误查全率', formatPercent(data.negative_recall), statHelpText.negative_recall)}
             ${renderStatsMetricItem('正确查准率', formatPercent(data.positive_precision), statHelpText.positive_precision)}
-            ${renderStatsMetricItem('F1 Score', formatPercent(data.f1_score), statHelpText.f1_score)}
+            ${renderStatsMetricItem('F1 Score', formatPercent(f1Value), statHelpText.f1_score)}
             ${renderStatsMetricItem('错误查准率', formatPercent(data.negative_precision), statHelpText.negative_precision)}
             ${renderStatsMetricItem('算法准确率', formatPercent(data.accuracy), statHelpText.accuracy)}
         </div>
@@ -2514,7 +2685,7 @@ function renderStatsCard(model, strategy, combo, data) {
 }
 
 function renderStatsMetricItem(label, value, tooltip) {
-    return `<span class="metric-help" data-tooltip="${escapeHtml(tooltip || '')}">
+    return `<span class="metric-help stats-chip ${getStatsToneClass(label)}" data-tooltip="${escapeHtml(tooltip || '')}">
         <span>${escapeHtml(label)}</span>
         <b>${escapeHtml(value)}</b>
     </span>`;
@@ -2711,6 +2882,7 @@ function formatDateTime(date) {
 
 // ==================== 5. 统计模块 ====================
 async function loadStats() {
+    renderStatsOverviewLoading();
     try {
         const comboName = getCurrentComboName();
         const statsUrl = comboName ? `/api/stats?model=${encodeURIComponent(comboName)}` : '/api/stats';
@@ -2719,39 +2891,29 @@ async function loadStats() {
             api(statsUrl),
             api(taskSummaryUrl),
         ]);
-
-        document.getElementById('statTotal').textContent = data.total || 0;
-        document.getElementById('statAnnotated').textContent = data.annotated || 0;
-
-        const tp = data.tp || 0;
-        const fn = data.fn || 0;
-        const fp = data.fp || 0;
-        const tn = data.tn || 0;
-        const annotated = data.annotated || 0;
-
-        document.getElementById('statTP').textContent = tp;
-        document.getElementById('statFN').textContent = fn;
-        document.getElementById('statFP').textContent = fp;
-        document.getElementById('statTN').textContent = tn;
-
-        // 总体准确率
-        const accRate = data.accuracy !== undefined ? data.accuracy : (annotated > 0 ? (tp + tn) / annotated : null);
-        document.getElementById('statAccuracy').textContent = formatPercent(accRate);
-        document.getElementById('statAccRate').textContent = formatPercent(accRate);
-        document.getElementById('statRecall').textContent = formatPercent(data.positive_recall);
-        document.getElementById('statSpecificity').textContent = formatPercent(data.negative_recall);
-        document.getElementById('statPositivePrecision').textContent = formatPercent(data.positive_precision);
-        document.getElementById('statF1Score').textContent = formatPercent(data.f1_score);
-        document.getElementById('statNegativePrecision').textContent = formatPercent(data.negative_precision);
-        document.getElementById('statTaskPending').textContent = taskSummary.pending || 0;
-        document.getElementById('statTaskRunning').textContent = taskSummary.running || 0;
-        document.getElementById('statTaskSuccess').textContent = taskSummary.success || 0;
-        document.getElementById('statTaskFailed').textContent = taskSummary.failed || 0;
-        document.getElementById('statTaskCancelled').textContent = taskSummary.cancelled || 0;
-
-        document.getElementById('statModel').textContent = getCurrentComboName() || '-';
+        renderStatsOverview(data, taskSummary);
     } catch (e) {
         console.error('加载统计失败', e);
+        renderStatsOverview({
+            total: 0,
+            annotated: 0,
+            tp: 0,
+            fn: 0,
+            fp: 0,
+            tn: 0,
+            accuracy: null,
+            positive_recall: null,
+            negative_recall: null,
+            positive_precision: null,
+            negative_precision: null,
+            f1_score: null,
+        }, {
+            pending: 0,
+            running: 0,
+            success: 0,
+            failed: 0,
+            cancelled: 0,
+        });
     }
 }
 

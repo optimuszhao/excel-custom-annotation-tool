@@ -83,70 +83,18 @@
         <main class="main-content space-y-6">
 
         <!-- B. 统计面板 -->
-        <div id="statsPanel" class="stats-strip">
-            <div class="stats-model">
-                <span class="stats-label">当前组合</span>
-                <span id="statModel" class="stats-model-name">-</span>
+        <div id="statsPanel" class="stats-overview">
+            <div class="stats-overview-loading">
+                <div class="overview-card overview-card-loading">
+                    <div class="overview-skeleton overview-skeleton-metrics"></div>
+                </div>
+                <div class="overview-card overview-card-loading">
+                    <div class="overview-skeleton overview-skeleton-grid"></div>
+                </div>
+                <div class="overview-card overview-card-loading">
+                    <div class="overview-skeleton overview-skeleton-pills"></div>
+                </div>
             </div>
-            <div class="stats-metric metric-help" data-tooltip="当前已入库的数据总行数。作为所有统计指标的整体样本规模。">
-                <span class="stats-label">总量</span>
-                <strong id="statTotal">0</strong>
-            </div>
-            <div class="stats-metric metric-help" data-tooltip="当前模型和方案下已有标注结果的数据行数。公式：TP + FN + FP + TN。">
-                <span class="stats-label">已标注</span>
-                <strong id="statAnnotated">0</strong>
-            </div>
-            <div class="stats-metric metric-help" data-tooltip="模型整体判断正确的比例。公式：(TP + TN) / (TP + FN + FP + TN)。">
-                <span class="stats-label">算法准确率</span>
-                <strong id="statAccuracy">-</strong>
-            </div>
-            <div class="stats-metric metric-help" data-tooltip="人工答案为“是”的样本中，被模型判为“是”的比例。公式：TP / (TP + FN)。">
-                <span class="stats-label">正确查全率</span>
-                <strong id="statRecall">-</strong>
-            </div>
-            <div class="stats-metric metric-help" data-tooltip="人工答案为“否”的样本中，被模型判为“否”的比例。公式：TN / (TN + FP)。">
-                <span class="stats-label">错误查全率</span>
-                <strong id="statSpecificity">-</strong>
-            </div>
-            <div class="stats-metric metric-help" data-tooltip="模型判为“是”的样本中，人工答案也为“是”的比例。公式：TP / (TP + FP)。">
-                <span class="stats-label">正确查准率</span>
-                <strong id="statPositivePrecision">-</strong>
-            </div>
-            <div class="stats-metric metric-help" data-tooltip="综合正确查准率和正确查全率的调和平均值。公式：2TP / (2TP + FP + FN)。">
-                <span class="stats-label">F1 Score</span>
-                <strong id="statF1Score">-</strong>
-            </div>
-            <div class="stats-metric metric-help" data-tooltip="模型判为“否”的样本中，人工答案也为“否”的比例。公式：TN / (TN + FN)。">
-                <span class="stats-label">错误查准率</span>
-                <strong id="statNegativePrecision">-</strong>
-            </div>
-            <div class="stats-metric metric-help" data-tooltip="当前组合处于 pending 状态的任务数量。">
-                <span class="stats-label">排队中</span>
-                <strong id="statTaskPending">0</strong>
-            </div>
-            <div class="stats-metric metric-help" data-tooltip="当前组合处于 running 状态的任务数量。">
-                <span class="stats-label">执行中</span>
-                <strong id="statTaskRunning">0</strong>
-            </div>
-            <div class="stats-metric metric-help" data-tooltip="当前组合处于 success 状态的任务数量。">
-                <span class="stats-label">成功</span>
-                <strong id="statTaskSuccess">0</strong>
-            </div>
-            <div class="stats-metric metric-help" data-tooltip="当前组合处于 failed 状态的任务数量。">
-                <span class="stats-label">失败</span>
-                <strong id="statTaskFailed">0</strong>
-            </div>
-            <div class="stats-metric metric-help" data-tooltip="当前组合处于 cancelled 状态的任务数量。">
-                <span class="stats-label">已取消</span>
-                <strong id="statTaskCancelled">0</strong>
-            </div>
-            <div class="stats-badges">
-                <span class="match-badge match-tp">TP <b id="statTP">0</b></span>
-                <span class="match-badge match-fn">FN <b id="statFN">0</b></span>
-                <span class="match-badge match-fp">FP <b id="statFP">0</b></span>
-                <span class="match-badge match-tn">TN <b id="statTN">0</b></span>
-            </div>
-            <span id="statAccRate" class="hidden">-</span>
         </div>
 
         <!-- C. 工作台区域 -->
@@ -269,8 +217,8 @@
                     <span class="mx-2">|</span>
                     <label>每页</label>
                     <select id="pageSizeSelect" class="border border-gray-300 rounded px-2 py-1 text-sm bg-white" onchange="changePageSize(this.value)">
-                        <option value="10">10</option>
-                        <option value="20" selected>20</option>
+                        <option value="10" selected>10</option>
+                        <option value="20">20</option>
                         <option value="50">50</option>
                         <option value="100">100</option>
                     </select>
