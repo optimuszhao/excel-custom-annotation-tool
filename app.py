@@ -2,7 +2,6 @@
 数据飞轮 Prompt 标注调试台 — FastAPI 后端
 """
 
-import sys
 import json
 import os
 import random
@@ -21,9 +20,6 @@ from typing import Optional, List, Dict, Any
 from uuid import uuid4
 
 BASE_DIR = Path(__file__).resolve().parent
-LOCAL_LIB_DIR = BASE_DIR / "lib"
-if LOCAL_LIB_DIR.exists():
-    sys.path.insert(0, str(LOCAL_LIB_DIR))
 
 import pandas as pd
 import yaml
