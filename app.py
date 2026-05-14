@@ -9,6 +9,7 @@ import shutil
 import tempfile
 import math
 import hashlib
+from urllib.parse import quote
 from contextlib import asynccontextmanager
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -252,6 +253,54 @@ def calc_match_type(human_answer: str, label: str) -> str:
 
 def ratio(numerator: int, denominator: int) -> float:
     return round(numerator / denominator, 4) if denominator > 0 else 0
+
+
+def format_percent_ratio(value: Optional[float]) -> str:
+    if value is None:
+        return "0%"
+    return f"{value * 100:.1f}%"
+
+
+def split_combo_name(combo_name: str) -> tuple[str, str]:
+    combo_name = (combo_name or "").strip()
+    if combo_name.endswith(")") and "(" in combo_name:
+        model_name, strategy_name = combo_name.rsplit("(", 1)
+        return model_name.strip(), strategy_name[:-1].strip()
+    return combo_name, ""
+
+
+def sanitize_export_filename_part(value: str, fallback: str) -> str:
+    value = (value or "").strip()
+    if not value:
+        return fallback
+    invalid_chars = '<>:"/\\|?*'
+    sanitized = "".join("_" if ch in invalid_chars or ord(ch) < 32 else ch for ch in value)
+    sanitized = sanitized.strip().strip(".")
+    return sanitized or fallback
+
+
+def resolve_export_source_file_name(rows: list) -> str:
+    names = []
+    for row in rows:
+        name = (row.file_name or "").strip()
+        if name:
+            names.append(name)
+    if not names:
+        return "data.xlsx"
+    unique_names = list(dict.fromkeys(names))
+    if len(unique_names) == 1:
+        return unique_names[0]
+    return "多文件.xlsx"
+
+
+def build_export_filename(combo_name: str, stats_payload: dict, source_file_name: str) -> str:
+    model_name, strategy_name = split_combo_name(combo_name)
+    annotated_count = int(stats_payload.get("annotated") or 0)
+    accuracy_text = format_percent_ratio(stats_payload.get("accuracy"))
+    model_part = sanitize_export_filename_part(model_name, "unknown_model")
+    strategy_part = sanitize_export_filename_part(strategy_name, "default_strategy")
+    source_stem = sanitize_export_filename_part(Path(source_file_name or "").stem, "data")
+    return f"标注{annotated_count}条数据（准确率{accuracy_text}）后结果+{model_part}+{strategy_part}+{source_stem}.xlsx"
 
 
 def build_stats_payload(total: int, annotations: list, model: str = "all", all_models: list = None) -> dict:
@@ -1805,6 +1854,7 @@ async def export_zip(model: str = Query(...)):
 
         total = db.query(ExcelRow).count()
         stats_payload = build_stats_payload(total, all_anns, model, [model])
+        source_file_name = resolve_export_source_file_name(rows)
 
         export_meta = {
             "exported_at": datetime.utcnow().isoformat(),
@@ -1821,13 +1871,19 @@ async def export_zip(model: str = Query(...)):
             pd.DataFrame([export_meta]).to_excel(writer, sheet_name="导出信息", index=False)
 
         output.seek(0)
-        safe_name = "".join(ch if (ch.isascii() and ch.isalnum()) else "_" for ch in model)[:80].strip("_") or "combo"
-        filename = f"data_flywheel_{safe_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        filename = build_export_filename(model, stats_payload, source_file_name)
+        ascii_fallback = "annotation_export.xlsx"
+        encoded_filename = quote(filename)
 
         return StreamingResponse(
             output,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f"attachment; filename={filename}"},
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="{ascii_fallback}"; '
+                    f"filename*=UTF-8''{encoded_filename}"
+                )
+            },
         )
     finally:
         db.close()
