@@ -1170,47 +1170,6 @@ def delete_annotations(body: dict = Body(...)):
         db.close()
 
 
-@app.delete("/api/rows")
-def delete_rows(body: dict = Body(...)):
-    db = SessionLocal()
-    try:
-        row_ids = [int(x) for x in body.get("row_ids", [])]
-        if not row_ids:
-            raise HTTPException(400, "row_ids is required")
-        query = db.query(ExcelRow).filter(ExcelRow.id.in_(row_ids))
-        if body.get("scene_id"):
-            query = query.filter(ExcelRow.scene_id == int(body["scene_id"]))
-        if body.get("excel_file_id"):
-            query = query.filter(ExcelRow.excel_file_id == int(body["excel_file_id"]))
-        rows = query.all()
-        existing_ids = [row.id for row in rows]
-        if not existing_ids:
-            return {"deleted_rows": 0, "deleted_annotations": 0, "deleted_tasks": 0}
-        deleted_annotations = db.query(AnnotationResult).filter(
-            AnnotationResult.row_id.in_(existing_ids)
-        ).delete(synchronize_session=False)
-        deleted_tasks = db.query(AnnotationTask).filter(
-            AnnotationTask.row_id.in_(existing_ids)
-        ).delete(synchronize_session=False)
-        deleted_rows = db.query(ExcelRow).filter(
-            ExcelRow.id.in_(existing_ids)
-        ).delete(synchronize_session=False)
-        excel_ids = {row.excel_file_id for row in rows}
-        for excel_id in excel_ids:
-            excel = db.query(ExcelFile).filter(ExcelFile.id == excel_id).first()
-            if excel:
-                excel.row_count = db.query(ExcelRow).filter(ExcelRow.excel_file_id == excel_id).count()
-                excel.updated_at = now()
-        db.commit()
-        return {
-            "deleted_rows": deleted_rows,
-            "deleted_annotations": deleted_annotations,
-            "deleted_tasks": deleted_tasks,
-        }
-    finally:
-        db.close()
-
-
 @app.get("/api/stats")
 def stats(scene_id: Optional[int] = None, excel_file_id: Optional[int] = None):
     db = SessionLocal()
