@@ -4,6 +4,7 @@
 __pycache__/
 *.pyc
 lib/
+frontend/node_modules/
 
 db.sqlite
 data.db

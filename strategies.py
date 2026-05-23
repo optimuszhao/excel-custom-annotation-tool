@@ -20,7 +20,7 @@ import hashlib
 import time
 
 
-MOCK_ANNOTATION_DELAY_SECONDS = 10
+MOCK_ANNOTATION_DELAY_SECONDS = 1
 
 
 def baseline_rule(prompt: str, row_data: dict, model_config_name: str, prompt_list: list = None, concurrency: int = 1, knowledge_list: list = None) -> dict:
@@ -36,7 +36,7 @@ def baseline_rule(prompt: str, row_data: dict, model_config_name: str, prompt_li
     #   row_data: rule.json 中 annotate_fields 对应的字段数据
     #   model_config_name: 当前选择的模型配置文件名
     # 返回字段需要包含 rule.json 的 result_label_field。
-    time.sleep(20)
+    time.sleep(MOCK_ANNOTATION_DELAY_SECONDS)
     label = mock_label(row_data, model_config_name, "baseline_rule", prompt_list)
     return {
         "大模型标注答案": label,
