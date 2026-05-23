@@ -7,6 +7,7 @@ import {
   Checkbox,
   Col,
   Drawer,
+  Dropdown,
   Form,
   Input,
   InputNumber,
@@ -34,6 +35,7 @@ import {
   DatabaseOutlined,
   FileTextOutlined,
   MessageOutlined,
+  MoreOutlined,
   RobotOutlined,
   SettingOutlined,
   TagsOutlined,
@@ -399,6 +401,60 @@ function AnnotationPage({ state, reload }) {
     }, 1600);
   }
 
+  async function clearSelectedAnnotations() {
+    if (!selected.length) {
+      message.warning('请选择数据');
+      return;
+    }
+    await api('/api/annotations', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        scene_id: state.sceneId,
+        excel_file_id: activeExcelId,
+        row_ids: selected,
+      }),
+    });
+    message.success('已清空选中标注');
+    setSelected([]);
+    await loadRows();
+    await reload();
+  }
+
+  async function deleteSelectedRows() {
+    if (!selected.length) {
+      message.warning('请选择数据');
+      return;
+    }
+    await api('/api/rows', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        scene_id: state.sceneId,
+        excel_file_id: activeExcelId,
+        row_ids: selected,
+      }),
+    });
+    message.success('已删除选中数据');
+    setSelected([]);
+    await loadRows(1);
+    await reload();
+  }
+
+  async function cancelPendingTasks() {
+    if (!activeExcelId) return;
+    const data = await api('/api/annotations/tasks/cancel-pending', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        scene_id: state.sceneId,
+        excel_file_id: activeExcelId,
+      }),
+    });
+    message.success(`已取消 ${data.cancelled || 0} 个排队任务`);
+    await reload();
+  }
+
   function applyColumnFilter(key, value) {
     const next = { ...filters, [key]: value };
     setFilters(next);
@@ -460,8 +516,30 @@ function AnnotationPage({ state, reload }) {
           <Select className="top-select" placeholder="模型" value={activeModelId} options={state.models.map((item) => ({ value: item.id, label: item.name }))} onChange={setModelId} />
           <Select mode="multiple" className="role-select" placeholder="标注角色" value={roleIds} options={state.roles.map((item) => ({ value: item.id, label: item.name }))} onChange={setRoleIds} />
           <Button type="primary" disabled={!selected.length} onClick={() => annotate(selected)}>标注选中</Button>
+          <Button disabled={!rows.length} onClick={() => annotate(rows.map((row) => row.id))}>标注当前页</Button>
+          <Popconfirm title="清空选中数据的标注结果？" disabled={!selected.length} onConfirm={clearSelectedAnnotations}>
+            <Button disabled={!selected.length}>清空标注</Button>
+          </Popconfirm>
+          <Popconfirm title="删除选中数据及关联任务结果？" disabled={!selected.length} onConfirm={deleteSelectedRows}>
+            <Button danger disabled={!selected.length}>删除选中</Button>
+          </Popconfirm>
           <Button disabled={!activeExcelId} onClick={() => window.open(`/api/export?scene_id=${state.sceneId}&excel_file_id=${activeExcelId}`)}>导出</Button>
-          <Button onClick={() => loadRows(1, {})}>刷新</Button>
+          <Dropdown
+            menu={{
+              items: [
+                { key: 'cancel', label: '取消排队任务' },
+                { key: 'clearSelection', label: '取消选择' },
+                { key: 'refresh', label: '刷新数据' },
+              ],
+              onClick: ({ key }) => {
+                if (key === 'cancel') cancelPendingTasks();
+                if (key === 'clearSelection') setSelected([]);
+                if (key === 'refresh') loadRows(1, {});
+              },
+            }}
+          >
+            <Button icon={<MoreOutlined />}>更多</Button>
+          </Dropdown>
         </Space>
       </Card>
       <StatsCards stats={state.stats} />
