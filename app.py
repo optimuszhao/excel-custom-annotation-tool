@@ -1101,7 +1101,15 @@ async def save_display_columns_to_rule(request: Request):
             if rule_config:
                 rule_config.excel_fields = json.dumps(columns, ensure_ascii=False)
                 rule_config.updated_at = datetime.utcnow()
-                db.commit()
+            else:
+                # RuleConfig 不存在则创建
+                rule_config = RuleConfig(
+                    scene_id=scene_id,
+                    excel_fields=json.dumps(columns, ensure_ascii=False),
+                    annotate_fields="[]",
+                )
+                db.add(rule_config)
+            db.commit()
         except Exception as e:
             db.rollback()
             print(f"[warn] 同步 display-columns 到数据库失败: {e}")
@@ -2846,22 +2854,30 @@ async def workbench_get_rows(
                 else:
                     active_annotated_row_ids.add(r.row_id)
 
-        # 无活跃任务时，基于 effective_task_id 批量查标注结果
+        # 基于 effective_task_id 批量查标注结果（无论是否有活跃任务都需查询）
+        # 修复：当用户指定 task_id 但存在活跃任务时，effective_annotated_row_ids 为空
+        # 导致 get_row_status 中 task_id 分支总返回"未标注"
         effective_annotated_row_ids = set()
         effective_error_row_ids = set()
-        if not active_task and effective_task_id:
-            eff_results = db.query(AnnotationResult.row_id, AnnotationResult.prompt_name).filter(
-                AnnotationResult.task_id == effective_task_id
-            ).all()
-            for r in eff_results:
-                if r.prompt_name == '__error__':
-                    effective_error_row_ids.add(r.row_id)
-                else:
-                    effective_annotated_row_ids.add(r.row_id)
+        if effective_task_id:
+            # 如果 effective_task_id 与 active_task.id 相同，复用 active 任务结果避免重复查询
+            if active_task and str(active_task.id) == str(effective_task_id):
+                effective_annotated_row_ids = active_annotated_row_ids.copy()
+                effective_error_row_ids = active_error_row_ids.copy()
+            else:
+                eff_results = db.query(AnnotationResult.row_id, AnnotationResult.prompt_name).filter(
+                    AnnotationResult.task_id == effective_task_id
+                ).all()
+                for r in eff_results:
+                    if r.prompt_name == '__error__':
+                        effective_error_row_ids.add(r.row_id)
+                    else:
+                        effective_annotated_row_ids.add(r.row_id)
 
         def get_row_status(row_id):
-            # 用户明确指定了 task_id，只显示该任务的状态，跳过活跃任务检查
-            if task_id and effective_task_id:
+            # 用户明确指定了 task_id，且该任务不是当前活跃任务时，只显示该任务的标注结果
+            # 如果指定的 task_id 就是活跃任务，则走活跃任务逻辑以显示"排队中""标注中"等状态
+            if task_id and effective_task_id and (not active_task or str(active_task.id) != str(effective_task_id)):
                 if row_id in effective_annotated_row_ids:
                     return "已标注"
                 if row_id in effective_error_row_ids:
@@ -4465,10 +4481,7 @@ async def create_error_book(request: Request):
     error_reason = (body.get("error_reason") or "").strip()
     if not scene_id:
         raise HTTPException(status_code=400, detail="scene_id 不能为空")
-    if not expected_answer:
-        raise HTTPException(status_code=400, detail="期望答案不能为空")
-    if not actual_output:
-        raise HTTPException(status_code=400, detail="实际输出不能为空")
+
     # original_data 存为JSON字符串
     if isinstance(original_data, (dict, list)):
         original_data = json.dumps(original_data, ensure_ascii=False)

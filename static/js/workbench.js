@@ -6,6 +6,7 @@
 // ========== 全局状态 ==========
 let currentFileId = null;          // 当前选中的 Excel 文件 ID
 let currentSceneId = null;         // 当前文件所属场景 ID
+let currentFileDisplayColumns = null; // 当前文件的文件级显示列配置（null=未设置, []=空数组）
 let currentTaskId = null;          // 当前查看的标注任务 ID
 let currentPage = 1;               // 当前页码
 const PAGE_SIZE = 20;              // 每页行数
@@ -264,12 +265,14 @@ async function onFileChange() {
     if (!fileId) {
         currentFileId = null;
         currentSceneId = null;
+        currentFileDisplayColumns = null;
         renderEmptyTable('请先选择数据文件');
         updateAnnotateButtons();
         return;
     }
 
     currentFileId = fileId;
+    currentFileDisplayColumns = null; // 重置文件级显示列缓存
     currentPage = 1;
     currentTaskId = null;
     currentFilterMatchType = '';
@@ -290,6 +293,12 @@ async function onFileChange() {
         currentFileTotalRows = fileInfo.total_rows || 0;
         const sceneId = fileInfo.scene_id;
         currentSceneId = sceneId || null;
+        // 缓存文件级 display_columns
+        if (fileInfo.display_columns && fileInfo.display_columns.length > 0) {
+            currentFileDisplayColumns = fileInfo.display_columns;
+        } else {
+            currentFileDisplayColumns = null;
+        }
         if (sceneId) {
             await loadPromptList(sceneId);
         }
@@ -333,10 +342,12 @@ async function loadTableData() {
 
         // 从返回数据的第一行收集所有字段 key 作为全量列
         const allFieldKeys = items.length > 0 ? Object.keys(items[0].data || {}) : tableColumns;
-        // 列初始化（如果 allColumns 为空或列集合有变化）
+        // 列初始化（如果 allColumns 为空、列集合有变化、或显示列配置变化）
         const allFieldStr = allFieldKeys.join(',');
         const prevFieldStr = allColumns.filter(c => c.type === 'data').map(c => c.key).join(',');
-        if (allColumns.length === 0 || prevFieldStr !== allFieldStr) {
+        const prevVisibleStr = [...visibleColumns].filter(k => !k.startsWith('__')).sort().join(',');
+        const newVisibleStr = (tableColumns || []).slice().sort().join(',');
+        if (allColumns.length === 0 || prevFieldStr !== allFieldStr || prevVisibleStr !== newVisibleStr) {
             initColumns(allFieldKeys, tableColumns);
         }
 
@@ -355,8 +366,13 @@ async function loadTableData() {
     }
 }
 
-// 获取文件的展示列（优先用 excel_fields 配置）
+// 获取文件的展示列（优先用文件级 display_columns，降级用全局规则 excel_fields）
 async function getDisplayColumns() {
+    // 优先使用文件级 display_columns
+    if (currentFileDisplayColumns && currentFileDisplayColumns.length > 0) {
+        return currentFileDisplayColumns;
+    }
+    // 降级使用全局规则
     try {
         const rule = await apiGet('/api/rule');
         const fields = rule.excel_fields || [];
@@ -468,6 +484,17 @@ async function syncColumnsToRule() {
             .map(c => c.key);
 
         await apiPut('/api/rule/display-columns', { columns: dataColumns, scene_id: currentSceneId });
+
+        // 同时保存到当前文件的 display_columns
+        if (currentFileId) {
+            try {
+                await apiPut(`/api/excel/${currentFileId}/display-columns`, { display_columns: dataColumns });
+                currentFileDisplayColumns = dataColumns; // 更新缓存
+            } catch (e) {
+                console.warn('[workbench] 保存文件级 display_columns 失败:', e);
+            }
+        }
+
         showToast('已同步到规则配置', 'success');
 
         // 刷新数据
