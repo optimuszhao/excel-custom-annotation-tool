@@ -1,481 +1,129 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>数据飞轮 - Prompt标注调试台</title>
-    <link rel="stylesheet" href="/static/tailwind.css">
-    <link rel="stylesheet" href="/static/style.css">
-</head>
-<body class="bg-gray-50 min-h-screen">
-    <div id="appLoading" class="app-loading hidden">
-        <div class="app-loading-card">
-            <div class="app-loading-spinner"></div>
-            <div id="appLoadingText">加载中...</div>
-        </div>
-    </div>
-    <div id="appShell">
+{% extends "base.html" %}
+{% block title %}Excel 数据管理{% endblock %}
 
-    <!-- A. 顶部导航栏 -->
-    <nav class="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-40">
-        <div class="max-w-full mx-auto px-6 py-3 flex items-center justify-between">
-            <div class="flex items-center gap-3">
-                <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-                    <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-                    </svg>
-                </div>
-                <h1 class="text-lg font-bold text-gray-800">数据飞轮 - Prompt标注调试台</h1>
-            </div>
-            <div class="flex items-center gap-4">
-                <div class="flex items-center gap-2">
-                    <label class="text-sm text-gray-600">当前模型:</label>
-                    <select id="modelSelect" class="top-control border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white min-w-[180px]">
-                        <option value="">选择模型...</option>
-                    </select>
-                </div>
-                <div class="flex items-center gap-2">
-                    <label class="text-sm text-gray-600">标注策略:</label>
-                    <select id="strategySelect"
-                        class="top-control border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white min-w-[140px]">
-                    </select>
-                </div>
-                <div class="flex items-center gap-2">
-                    <label class="text-sm text-gray-600">并发数:</label>
-                    <input id="concurrencyInput" class="top-control border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white w-20" type="number" min="1" max="20" value="1" oninput="setCurrentConcurrency(this.value)" onchange="setCurrentConcurrency(this.value)">
-                </div>
-                <button onclick="openDefaultSettingsModal()" class="flex items-center gap-2 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors">
-                    默认设置
-                </button>
-                <button onclick="exportData()" class="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded-lg text-sm font-medium transition-colors">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-                    </svg>
-                    导出
-                </button>
-            </div>
-        </div>
-    </nav>
-
-    <div class="app-layout">
-        <aside class="side-menu">
-            <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" class="hidden" onchange="handleFileUpload(event)">
-            <button id="uploadExcelBtn" class="side-upload-btn" onclick="handleUploadExcelClick()">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
-                </svg>
-                上传 Excel
+{% block content %}
+<div class="p-6" style="flex:1; overflow-y:auto;">
+    <!-- 顶部工具栏 -->
+    <div class="flex justify-between items-center mb-6">
+        <h2 style="font-size:20px; font-weight:700; color:#1f2937;">Excel 数据管理</h2>
+        <div class="flex gap-3">
+            <button id="refreshAllBtn" class="btn-secondary">全局刷新本地Excel</button>
+            <button id="uploadBtn" style="display:inline-flex; align-items:center; gap:6px; padding:8px 16px; background:linear-gradient(135deg, #2563eb, #1d4ed8); color:#fff; border:none; border-radius:8px; font-size:14px; font-weight:500; cursor:pointer; box-shadow:0 2px 4px rgba(37,99,235,0.3); transition:all 0.2s;"
+                onmouseover="this.style.boxShadow='0 4px 8px rgba(37,99,235,0.4)'; this.style.transform='translateY(-1px)'"
+                onmouseout="this.style.boxShadow='0 2px 4px rgba(37,99,235,0.3)'; this.style.transform='translateY(0)'">
+                <svg style="width:16px;height:16px;flex-shrink:0;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                新增 Excel 数据源
             </button>
-            <button id="clearAllDataBtn" onclick="openClearDataConfirm()" class="side-clear-btn">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-                </svg>
-                删除数据
-            </button>
-            <button class="side-menu-item active" onclick="switchPage('annotation', this)">数据标注</button>
-            <button class="side-menu-item" onclick="switchPage('prompt', this)">Prompt 管理</button>
-            <button class="side-menu-item" onclick="switchPage('knowledge', this)">知识管理</button>
-            <button class="side-menu-item" onclick="switchPage('model', this)">模型配置</button>
-            <button class="side-menu-item" onclick="switchPage('rule', this)">规则管理</button>
-            <button class="side-menu-item" onclick="switchPage('stats', this)">统计数据</button>
-        </aside>
-
-        <main class="main-content space-y-6">
-
-        <!-- B. 统计面板 -->
-        <div id="statsPanel" class="stats-overview">
-            <div class="stats-overview-loading">
-                <div class="overview-card overview-card-loading">
-                    <div class="overview-skeleton overview-skeleton-metrics"></div>
-                </div>
-                <div class="overview-card overview-card-loading">
-                    <div class="overview-skeleton overview-skeleton-grid"></div>
-                </div>
-                <div class="overview-card overview-card-loading">
-                    <div class="overview-skeleton overview-skeleton-pills"></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- C. 工作台区域 -->
-        <div id="pageAnnotation" class="page-panel bg-white rounded-xl shadow-sm border border-gray-200">
-            <!-- 操作栏 -->
-            <div class="workbench-toolbar px-6 py-4 border-b border-gray-200 flex items-center gap-4 flex-wrap">
-                <div class="selection-panel">
-                    <div id="rangeSelector" class="range-selector hidden">
-                        <div class="range-track-row">
-                            <button id="rangeStepLeftBtn" onclick="adjustRangeBoundary('start', -1)" class="range-step-btn" type="button" aria-label="左边界向左扩展 1 条">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
-                                </svg>
-                            </button>
-                            <div id="rangeTrack" class="range-track">
-                                <div id="rangeFill" class="range-fill"></div>
-                                <button id="rangeStartThumb" class="range-thumb" type="button" aria-label="拖动选择起始数据"></button>
-                                <button id="rangeEndThumb" class="range-thumb" type="button" aria-label="拖动选择结束数据"></button>
-                            </div>
-                            <button id="rangeStepRightBtn" onclick="adjustRangeBoundary('end', 1)" class="range-step-btn" type="button" aria-label="右边界向右扩展 1 条">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-                                </svg>
-                            </button>
-                        </div>
-                        <div class="range-selector-actions">
-                            <div class="range-live-count" aria-live="polite">
-                                <span class="range-live-hint">拖动选择数量</span>
-                                <span id="rangeStartCount">左 1</span>
-                                <span id="rangeEndCount">右 1</span>
-                                <strong id="rangeSelectedCount">共 1 条</strong>
-                            </div>
-                            <div class="bulk-action-menu">
-                            <button id="bulkActionBtn" onclick="toggleBulkActionMenu(event)" class="annotate-selected-btn" disabled type="button">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M7 12h10M10 18h4"/>
-                                </svg>
-                                <span id="annotateSelectedText">批量操作</span>
-                                <span id="selectedCount" class="selected-count">0</span>
-                            </button>
-                            <div id="bulkActionPanel" class="bulk-action-panel hidden">
-                                <button onclick="openBulkActionConfirm('annotate')">批量标注</button>
-                                <button onclick="openBulkActionConfirm('clear_annotations')">清空标注内容</button>
-                                <button class="danger" onclick="openBulkActionConfirm('delete')">批量删除</button>
-                            </div>
-                        </div>
-                        <button id="clearSelectionBtn" onclick="openBulkActionConfirm('clear_selection')" class="flat-btn compact-clear-btn" disabled>取消选择</button>
-                        </div>
-                    </div>
-                    <div id="selectedActions" class="selected-actions">
-                        <button id="annotateSelectedBtn" onclick="openBulkActionConfirm('annotate')" class="sr-only-bulk-action" disabled>
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>
-                            </svg>
-                        </button>
-                        <button id="clearAnnotationBtn" onclick="openBulkActionConfirm('clear_annotations')" class="sr-only-bulk-action" disabled>清空标注内容</button>
-                        <button id="deleteSelectedRowsBtn" onclick="openBulkActionConfirm('delete')" class="sr-only-bulk-action" disabled>删除数据</button>
-                    </div>
-                </div>
-                <span id="bulkAnnotateStatus" class="bulk-annotate-status hidden"></span>
-                <div class="toolbar-spacer flex-1"></div>
-                <div class="toolbar-right-actions">
-                    <div class="toolbar-search flex items-center gap-3">
-                        <div class="relative">
-                            <input type="text" id="searchInput" placeholder="搜索：ID、人工答案、匹配类型、Excel字段、模型结果" class="border border-gray-300 rounded-lg pl-9 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-64" oninput="handleSearch(this.value)">
-                            <svg class="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
-                            </svg>
-                        </div>
-                        <select id="filterSelect" class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white" onchange="handleFilter(this.value)">
-                            <option value="">全部</option>
-                            <option value="TP">TP - 人工是+模型是</option>
-                            <option value="FN">FN - 人工是+模型否</option>
-                            <option value="FP">FP - 人工否+模型是</option>
-                            <option value="TN">TN - 人工否+模型否</option>
-                            <option value="unlabeled">未标注</option>
-                        </select>
-                        <div class="toolbar-more-menu">
-                            <button id="toolbarMoreBtn" onclick="toggleToolbarMoreMenu(event)" class="toolbar-more-btn" type="button">
-                                更多
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-                                </svg>
-                            </button>
-                            <div id="toolbarMorePanel" class="toolbar-more-panel hidden">
-                                <button id="columnToggleBtn" onclick="toggleColumnPanel(event)" class="toolbar-menu-item" type="button">
-                                    显示列 <span id="columnCount" class="toolbar-menu-count">0</span>
-                                </button>
-                                <button id="customFullAnnotateBtn" onclick="customFullAnnotate()" class="toolbar-menu-item primary" type="button">
-                                    自定义全量标注
-                                </button>
-                                <button id="cancelPendingTasksBtn" onclick="openCancelPendingTasksConfirm()" class="toolbar-menu-item danger" type="button">
-                                    取消剩下标注
-                                </button>
-                            </div>
-                            <div id="columnPanel" class="column-panel hidden">
-                                <div class="flex items-center justify-between px-3 py-2 border-b border-gray-100">
-                                    <button onclick="event.stopPropagation();setAllColumns(true)" class="column-action-btn">全选</button>
-                                    <button onclick="event.stopPropagation();setAllColumns(false)" class="column-action-btn muted">清空</button>
-                                </div>
-                                <div id="columnChooser" class="column-options"></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <!-- 数据表格 -->
-            <div class="table-container">
-                <table id="dataTable" class="w-full text-sm text-left">
-                    <thead id="tableHead" class="bg-gray-50 text-gray-600 uppercase text-xs border-b border-gray-200">
-                    </thead>
-                    <tbody id="tableBody" class="divide-y divide-gray-100">
-                    </tbody>
-                </table>
-            </div>
-            <!-- 分页控件 -->
-            <div class="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
-                <div class="flex items-center gap-2 text-sm text-gray-600">
-                    <span>共 <span id="totalCount">0</span> 条</span>
-                    <span class="mx-2">|</span>
-                    <label>每页</label>
-                    <select id="pageSizeSelect" class="border border-gray-300 rounded px-2 py-1 text-sm bg-white" onchange="changePageSize(this.value)">
-                        <option value="10" selected>10</option>
-                        <option value="20">20</option>
-                        <option value="50">50</option>
-                        <option value="100">100</option>
-                    </select>
-                    <span>条</span>
-                </div>
-                <div class="flex items-center gap-2">
-                    <div id="pagination" class="flex items-center gap-1">
-                    </div>
-                    <div class="page-jump">
-                        <span>跳至</span>
-                        <input id="pageJumpInput" type="number" min="1" value="1" onkeydown="handlePageJumpKey(event)">
-                        <button onclick="jumpToPage()">确定</button>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- D. Prompt 管理 -->
-        <div id="pagePrompt" class="page-panel hidden bg-white rounded-xl shadow-sm border border-gray-200">
-            <div id="tabPrompt" class="p-6">
-                <div class="grid grid-cols-4 gap-6" style="min-height:400px;">
-                    <div class="col-span-1 border-r border-gray-200 pr-4">
-                        <div class="flex items-center justify-between mb-3">
-                            <h3 class="text-sm font-semibold text-gray-700">Prompt 文件列表</h3>
-                            <button onclick="newPrompt()" class="flex items-center gap-1 text-blue-600 hover:text-blue-700 text-sm font-medium transition-colors">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                                新增
-                            </button>
-                        </div>
-                        <div id="promptList" class="space-y-1"></div>
-                    </div>
-                    <div class="col-span-3">
-                        <div class="flex items-center justify-between mb-3">
-                            <h3 class="text-sm font-semibold text-gray-700">编辑 Prompt: <span id="currentPromptName" class="text-blue-600">未选择</span></h3>
-                            <button onclick="savePrompt()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded-lg text-sm font-medium transition-colors">保存</button>
-                        </div>
-                        <div id="promptFileNameRow" class="mb-3 hidden">
-                            <input type="text" id="promptFileNameInput" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="请输入文件名，如 my_prompt.txt">
-                        </div>
-                        <div class="editor-split">
-                            <textarea id="promptEditor" oninput="updateCodePreview('prompt')" class="w-full border border-gray-300 rounded-lg p-4 editor-textarea focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="选择一个 Prompt 文件开始编辑..."></textarea>
-                            <div class="code-preview-card">
-                                <div class="code-preview-title">TXT 预览</div>
-                                <pre id="promptPreview" class="code-preview txt-preview"></pre>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- E. 知识管理 -->
-        <div id="pageKnowledge" class="page-panel hidden bg-white rounded-xl shadow-sm border border-gray-200">
-            <div id="tabKnowledge" class="p-6">
-                <div class="grid grid-cols-4 gap-6" style="min-height:400px;">
-                    <div class="col-span-1 border-r border-gray-200 pr-4">
-                        <div class="flex items-center justify-between mb-3">
-                            <h3 class="text-sm font-semibold text-gray-700">知识文件列表</h3>
-                            <button onclick="newKnowledge()" class="flex items-center gap-1 text-blue-600 hover:text-blue-700 text-sm font-medium transition-colors">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                                新增
-                            </button>
-                        </div>
-                        <div id="knowledgeList" class="space-y-1"></div>
-                    </div>
-                    <div class="col-span-3">
-                        <div class="flex items-center justify-between mb-3">
-                            <h3 class="text-sm font-semibold text-gray-700">编辑知识: <span id="currentKnowledgeName" class="text-blue-600">未选择</span></h3>
-                            <button onclick="saveKnowledge()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded-lg text-sm font-medium transition-colors">保存</button>
-                        </div>
-                        <div id="knowledgeFileNameRow" class="mb-3 hidden">
-                            <input type="text" id="knowledgeFileNameInput" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="请输入文件名，如 knowledge.json、rules.jsonl、notes.txt">
-                        </div>
-                        <div class="editor-split">
-                            <textarea id="knowledgeEditor" oninput="updateCodePreview('knowledge')" class="w-full border border-gray-300 rounded-lg p-4 editor-textarea focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="选择一个知识文件开始编辑..."></textarea>
-                            <div class="code-preview-card">
-                                <div class="code-preview-title">知识预览</div>
-                                <pre id="knowledgePreview" class="code-preview txt-preview"></pre>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- F. 模型配置 -->
-        <div id="pageModel" class="page-panel hidden bg-white rounded-xl shadow-sm border border-gray-200">
-            <div id="tabModel" class="p-6">
-                <div class="grid grid-cols-4 gap-6" style="min-height:400px;">
-                    <div class="col-span-1 border-r border-gray-200 pr-4">
-                        <div class="flex items-center justify-between mb-3">
-                            <h3 class="text-sm font-semibold text-gray-700">模型配置文件列表</h3>
-                            <button onclick="newModel()" class="flex items-center gap-1 text-blue-600 hover:text-blue-700 text-sm font-medium transition-colors">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                                新增
-                            </button>
-                        </div>
-                        <div id="modelList" class="space-y-1"></div>
-                    </div>
-                    <div class="col-span-3">
-                        <div class="flex items-center justify-between mb-3">
-                            <h3 class="text-sm font-semibold text-gray-700">编辑模型配置: <span id="currentModelName" class="text-blue-600">未选择</span></h3>
-                            <button onclick="saveModel()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded-lg text-sm font-medium transition-colors">保存</button>
-                        </div>
-                        <div id="modelFileNameRow" class="mb-3 hidden">
-                            <input type="text" id="modelFileNameInput" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="请输入文件名，如 my_model.yaml">
-                        </div>
-                        <div class="editor-split">
-                            <textarea id="modelEditor" oninput="updateCodePreview('model')" class="w-full border border-gray-300 rounded-lg p-4 editor-textarea focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="选择一个模型配置文件开始编辑..."></textarea>
-                            <div class="code-preview-card">
-                                <div class="code-preview-title">YAML 预览</div>
-                                <pre id="modelPreview" class="code-preview yaml-preview"></pre>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- F. 规则管理 -->
-        <div id="pageRule" class="page-panel hidden bg-white rounded-xl shadow-sm border border-gray-200">
-            <div id="tabRule" class="p-6">
-                <div class="max-w-none">
-                    <div class="flex items-center justify-between mb-3">
-                        <h3 class="text-sm font-semibold text-gray-700">编辑 rule.json</h3>
-                        <button onclick="saveRule()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded-lg text-sm font-medium transition-colors">保存</button>
-                    </div>
-                    <p class="text-xs text-gray-500 mb-3">配置 Excel 导入字段、标注字段、答案字段和比对字段。修改后点“保存”生效。</p>
-                    <div class="editor-split editor-split-wide">
-                        <textarea id="ruleEditor" oninput="updateCodePreview('rule')" class="w-full border border-gray-300 rounded-lg p-4 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" style="min-height:300px;" placeholder="加载中..."></textarea>
-                        <div class="code-preview-card">
-                            <div class="code-preview-title">JSON 预览</div>
-                            <pre id="rulePreview" class="code-preview json-preview"></pre>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- G. 统计数据 -->
-        <div id="pageStats" class="page-panel hidden bg-white rounded-xl shadow-sm border border-gray-200">
-            <div class="p-6 space-y-4">
-                <div class="flex items-center justify-between">
-                    <h2 class="text-base font-bold text-gray-800">组合统计</h2>
-                    <button onclick="refreshStatsPage()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">刷新统计</button>
-                </div>
-                <div id="comboBatchActions" class="combo-batch-actions hidden">
-                    <div class="combo-batch-title">已选择 <b id="selectedComboCount">0</b> 个组合</div>
-                    <button onclick="annotateSelectedCombos()" class="combo-batch-btn">全量标注选中组合</button>
-                    <button onclick="clearComboSelection()" class="flat-btn muted">清空选择</button>
-                    <span id="comboBatchProgress" class="combo-batch-progress"></span>
-                </div>
-                <div id="comboStatsGrid" class="combo-stats-grid"></div>
-            </div>
-        </div>
-        </main>
-    </div>
-
-    <!-- E. 详情弹窗 -->
-    <div id="detailModal" class="modal-overlay hidden" onclick="closeDetailModal()">
-        <div class="modal-content detail-modal-content" onclick="event.stopPropagation()">
-            <div class="flex items-center justify-between mb-6">
-                <h2 class="text-lg font-bold text-gray-800">数据详情</h2>
-                <button onclick="closeDetailModal()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
-            </div>
-            <div id="detailContent" class="space-y-6"></div>
-            <div class="flex justify-end mt-6">
-                <button onclick="closeDetailModal()" class="px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition-colors">关闭</button>
-            </div>
         </div>
     </div>
 
-    <div id="cellContentModal" class="modal-overlay hidden" onclick="closeCellContentModal()">
-        <div class="modal-content cell-content-modal" onclick="event.stopPropagation()">
-            <div class="cell-content-modal-head">
-                <div class="flex items-center gap-3">
-                    <h2 class="text-lg font-bold text-gray-800">完整内容</h2>
-                    <span id="cellContentType" class="cell-content-type">TEXT</span>
-                </div>
-                <button onclick="closeCellContentModal()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
-            </div>
-            <pre id="cellContentBody" class="cell-content-full"></pre>
-            <div class="flex justify-end gap-2 mt-4">
-                <button onclick="copyCellContentModal()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">复制内容</button>
-                <button onclick="closeCellContentModal()" class="px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition-colors">关闭</button>
-            </div>
+    <!-- 场景过滤 + 搜索 -->
+    <div class="flex items-center gap-3 mb-4">
+        <select id="sceneFilter" class="form-select" style="width: 12rem;">
+            <option value="">全部场景</option>
+        </select>
+        <input type="text" id="searchInput" class="form-input" style="width: 16rem;" placeholder="搜索文件名...">
+    </div>
+
+    <!-- 数据表格 -->
+    <div class="card">
+        <table class="data-table" id="excelTable">
+            <thead>
+                <tr>
+                    <th>序号</th>
+                    <th class="cursor-pointer" data-sort="file_name">文件名 ↕</th>
+                    <th class="cursor-pointer" data-sort="total_rows">总行数 ↕</th>
+                    <th>已标注数量</th>
+                    <th>包含的列信息</th>
+                    <th>所属场景</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody id="excelTableBody"></tbody>
+        </table>
+        <!-- 空状态 -->
+        <div id="emptyState" class="empty-state" style="display:none;">
+            <p class="empty-state__text">暂无数据，请上传Excel文件</p>
         </div>
     </div>
 
-    <div id="defaultSettingsModal" class="modal-overlay hidden" onclick="closeDefaultSettingsModal()">
-        <div class="modal-content settings-modal-content" onclick="event.stopPropagation()">
-            <div class="flex items-center justify-between mb-5">
-                <h2 class="text-lg font-bold text-gray-800">默认设置</h2>
-                <button onclick="closeDefaultSettingsModal()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
-            </div>
-            <div class="settings-form">
-                <label>
-                    <span>默认模型</span>
-                    <select id="defaultModelSelect"></select>
-                </label>
-                <label>
-                    <span>默认方案</span>
-                    <select id="defaultStrategySelect"></select>
-                </label>
-                <label>
-                    <span>默认并发数</span>
-                    <input id="defaultConcurrencyInput" type="number" min="1" max="20" value="1">
-                </label>
-            </div>
-            <div class="flex justify-end gap-2 mt-5">
-                <button onclick="saveDefaultSettings()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">保存</button>
-                <button onclick="closeDefaultSettingsModal()" class="px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition-colors">关闭</button>
-            </div>
-        </div>
-    </div>
-
-    <div id="clearDataModal" class="modal-overlay hidden" onclick="closeClearDataConfirm()">
-        <div class="modal-content clear-data-modal" onclick="event.stopPropagation()">
-            <div class="clear-data-head">
-                <div>
-                    <h2>删除全部数据</h2>
-                    <p>此操作会清空已入库数据、标注结果和标注任务，执行后无法恢复。</p>
-                </div>
-                <button onclick="closeClearDataConfirm()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
-            </div>
-            <div class="clear-danger-copy">
-                请确认你已经导出或备份需要保留的数据。滑块滑到最右侧后才会执行删除。
-            </div>
-            <div id="clearSlideTrack" class="clear-slide-track">
-                <div id="clearSlideFill" class="clear-slide-fill"></div>
-                <div class="clear-slide-label">滑动确认删除全部数据</div>
-                <button id="clearSlideThumb" class="clear-slide-thumb" type="button" aria-label="滑动确认删除">删除</button>
-            </div>
-            <div class="flex justify-end gap-2 mt-5">
-                <button onclick="closeClearDataConfirm()" class="px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition-colors">取消</button>
-            </div>
-        </div>
-    </div>
-
-    <div id="bulkConfirmModal" class="modal-overlay hidden" onclick="closeBulkActionConfirm()">
-        <div class="modal-content bulk-confirm-modal" onclick="event.stopPropagation()">
-            <div class="bulk-confirm-head">
-                <div>
-                    <h2 id="bulkConfirmTitle">批量操作确认</h2>
-                    <p id="bulkConfirmDesc">请确认本次操作。</p>
-                </div>
-                <button onclick="closeBulkActionConfirm()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
-            </div>
-            <div id="bulkConfirmImpact" class="bulk-confirm-impact"></div>
-            <div class="bulk-confirm-actions">
-                <button onclick="closeBulkActionConfirm()" class="px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition-colors">取消</button>
-                <button id="bulkConfirmSubmit" onclick="executeBulkActionConfirm()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">确认执行</button>
-            </div>
-        </div>
-    </div>
-
+    <!-- 分页 -->
+    <div id="pagination"></div>
 </div>
-    <script src="/static/app.js"></script>
-</body>
-</html>
+
+<!-- 上传弹窗 -->
+<div id="uploadModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:50; align-items:center; justify-content:center;">
+    <div style="background:#fff; border-radius:0.5rem; padding:1.5rem; box-shadow:0 4px 16px rgba(0,0,0,0.15); width:500px; max-width:90vw;">
+        <h3 style="font-size:1rem; font-weight:600; margin-bottom:1rem;">新增 Excel 数据源</h3>
+        <div style="display:flex; flex-direction:column; gap:1rem;">
+            <div>
+                <label class="form-label">选择文件</label>
+                <div id="file-upload-area" style="border:2px dashed #d1d5db; border-radius:10px; padding:28px 20px; text-align:center; cursor:pointer; transition:border-color 0.2s, background 0.2s;"
+                     ondragover="event.preventDefault(); this.style.borderColor='#2563eb'; this.style.background='#eff6ff';"
+                     ondragleave="this.style.borderColor='#d1d5db'; this.style.background='transparent';"
+                     ondrop="handleFileDrop(event)"
+                     onclick="document.getElementById('fileInput').click();">
+                    <div id="file-upload-placeholder">
+                        <svg style="width:36px; height:36px; color:#9ca3af; margin:0 auto 8px; display:block;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                        </svg>
+                        <p style="font-size:13px; color:#6b7280; margin:0;">点击或拖拽文件到此处</p>
+                        <p style="font-size:11px; color:#9ca3af; margin:4px 0 0;">支持 .xlsx, .xls 格式</p>
+                    </div>
+                    <div id="file-upload-info" style="display:none;">
+                        <div style="display:flex; align-items:center; justify-content:center; gap:8px;">
+                            <svg style="width:20px; height:20px; color:#16a34a;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                            </svg>
+                            <span id="file-name-display" style="font-size:13px; color:#111827; font-weight:500;"></span>
+                        </div>
+                        <p id="file-size-display" style="font-size:11px; color:#9ca3af; margin:4px 0 0;"></p>
+                    </div>
+                </div>
+                <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none;" onchange="handleFileSelect(this)">
+            </div>
+            <div>
+                <label class="form-label">所属场景</label>
+                <select id="uploadSceneSelect" class="form-select"></select>
+            </div>
+        </div>
+        <div style="display:flex; justify-content:flex-end; gap:0.75rem; margin-top:1.5rem;">
+            <button id="uploadCancelBtn" class="btn-secondary">取消</button>
+            <button id="uploadConfirmBtn" class="btn-primary">上传</button>
+        </div>
+    </div>
+</div>
+
+<!-- 修改文件名弹窗 -->
+<div id="renameModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:50; align-items:center; justify-content:center;">
+    <div style="background:#fff; border-radius:0.5rem; padding:1.5rem; box-shadow:0 4px 16px rgba(0,0,0,0.15); width:400px; max-width:90vw;">
+        <h3 style="font-size:1rem; font-weight:600; margin-bottom:1rem;">修改文件名</h3>
+        <div>
+            <label class="form-label">新文件名</label>
+            <input type="text" id="renameInput" class="form-input" placeholder="请输入新文件名">
+        </div>
+        <div style="display:flex; justify-content:flex-end; gap:0.75rem; margin-top:1.5rem;">
+            <button id="renameCancelBtn" class="btn-secondary">取消</button>
+            <button id="renameConfirmBtn" class="btn-primary">确认</button>
+        </div>
+    </div>
+</div>
+
+<!-- 设定显示列弹窗 -->
+<div id="displayColumnsModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:50; align-items:center; justify-content:center;">
+    <div style="background:#fff; border-radius:0.5rem; padding:1.5rem; box-shadow:0 4px 16px rgba(0,0,0,0.15); width:500px; max-width:90vw;">
+        <h3 style="font-size:1rem; font-weight:600; margin-bottom:1rem;">设定显示列</h3>
+        <div id="displayColumnsList" style="display:flex; flex-direction:column; gap:0.5rem; max-height:20rem; overflow-y:auto;">
+            <!-- 列名复选框由JS渲染 -->
+        </div>
+        <div style="display:flex; justify-content:flex-end; gap:0.75rem; margin-top:1.5rem;">
+            <button id="displayColumnsCancelBtn" class="btn-secondary">取消</button>
+            <button id="displayColumnsConfirmBtn" class="btn-primary">确认</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/excel_manage.js"></script>
+{% endblock %}

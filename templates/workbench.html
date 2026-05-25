@@ -1,0 +1,486 @@
+{% extends "base.html" %}
+{% block title %}标注工作台{% endblock %}
+
+{% block head %}
+<style>
+/* ========== 工作台专用样式 ========== */
+.toolbar-section {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.toolbar-label {
+    font-size: 0.875rem;
+    color: #6b7280;
+    white-space: nowrap;
+}
+.toolbar-select {
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 0.875rem;
+    background: #fff;
+    color: #374151;
+    min-width: 120px;
+}
+.toolbar-input-number {
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 0.875rem;
+    width: 64px;
+    text-align: center;
+}
+.toolbar-divider {
+    width: 1px;
+    height: 28px;
+    background: #e5e7eb;
+    margin: 0 4px;
+}
+
+/* Prompt 多选下拉 */
+.prompt-dropdown-wrap {
+    position: relative;
+}
+.prompt-dropdown-btn {
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    padding: 5px 28px 5px 10px;
+    font-size: 0.875rem;
+    background: #fff;
+    color: #374151;
+    min-width: 160px;
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+.prompt-dropdown-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 200;
+    background: #fff;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    min-width: 220px;
+    max-height: 260px;
+    overflow-y: auto;
+    padding: 6px 0;
+    display: none;
+}
+.prompt-dropdown-menu.open { display: block; }
+.prompt-dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 14px;
+    font-size: 0.875rem;
+    cursor: pointer;
+    color: #374151;
+}
+.prompt-dropdown-item:hover { background: #f3f4f6; }
+.prompt-dropdown-item input[type="checkbox"] { accent-color: #2563eb; }
+
+/* 标注按钮组 */
+.annotate-btn-primary {
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 16px;
+    font-size: 0.875rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 500;
+    transition: background 0.15s;
+}
+.annotate-btn-primary:hover { background: #1d4ed8; }
+.annotate-btn-primary:disabled { background: #93c5fd; cursor: not-allowed; }
+.annotate-btn-secondary {
+    background: #f3f4f6;
+    color: #374151;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.annotate-btn-secondary:hover { background: #e5e7eb; }
+.annotate-btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* match_type 颜色标识 */
+.badge-tp { background: #dcfce7; color: #166534; border-radius: 4px; padding: 2px 7px; font-size: 11px; font-weight: 600; }
+.badge-tn { background: #dbeafe; color: #1e40af; border-radius: 4px; padding: 2px 7px; font-size: 11px; font-weight: 600; }
+.badge-fp { background: #fef9c3; color: #854d0e; border-radius: 4px; padding: 2px 7px; font-size: 11px; font-weight: 600; }
+.badge-fn { background: #fee2e2; color: #991b1b; border-radius: 4px; padding: 2px 7px; font-size: 11px; font-weight: 600; }
+.badge-unknown { background: #f3f4f6; color: #6b7280; border-radius: 4px; padding: 2px 7px; font-size: 11px; font-weight: 600; }
+.badge-pending { background: #e0f2fe; color: #0369a1; border-radius: 4px; padding: 2px 7px; font-size: 11px; }
+
+/* 统计卡片 */
+.stat-card {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    padding: 14px 18px;
+    text-align: center;
+    min-width: 100px;
+}
+.stat-card .stat-value {
+    font-size: 22px;
+    font-weight: 700;
+    color: #111827;
+    line-height: 1.2;
+}
+.stat-card .stat-label {
+    font-size: 11px;
+    color: #6b7280;
+    margin-top: 2px;
+}
+.stat-card.accent-blue .stat-value { color: #2563eb; }
+.stat-card.accent-green .stat-value { color: #16a34a; }
+.stat-card.accent-yellow .stat-value { color: #d97706; }
+.stat-card.accent-red .stat-value { color: #dc2626; }
+
+/* 混淆矩阵 */
+.confusion-matrix {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    max-width: 240px;
+}
+.cm-cell {
+    border-radius: 8px;
+    padding: 10px 8px;
+    text-align: center;
+    font-size: 0.875rem;
+    font-weight: 600;
+}
+.cm-tp { background: #dcfce7; color: #166534; }
+.cm-tn { background: #dbeafe; color: #1e40af; }
+.cm-fp { background: #fef9c3; color: #854d0e; }
+.cm-fn { background: #fee2e2; color: #991b1b; }
+
+/* 任务进度条 */
+.task-progress-bar {
+    height: 6px;
+    border-radius: 3px;
+    background: #e5e7eb;
+    overflow: hidden;
+    margin-top: 4px;
+}
+.task-progress-fill {
+    height: 100%;
+    border-radius: 3px;
+    background: #2563eb;
+    transition: width 0.4s;
+}
+
+/* 表格 */
+.data-table {
+    min-width: 100%;
+    width: max-content;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+}
+.data-table th {
+    background: #f9fafb;
+    color: #6b7280;
+    font-weight: 600;
+    font-size: 0.875rem;
+    padding: 10px 12px;
+    text-align: center;
+    border-bottom: 1px solid #e5e7eb;
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+.data-table td {
+    padding: 9px 12px;
+    border-bottom: 1px solid #f3f4f6;
+    vertical-align: middle;
+    max-width: 280px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: center;
+}
+.data-table tr:hover td { background: #f9fafb; }
+.data-table tr.selected td { background: #eff6ff; }
+
+/* 操作列 sticky 固定 */
+.data-table th.sticky-op-col {
+    position: sticky;
+    right: 0;
+    background: #f9fafb;
+    z-index: 12;
+    box-shadow: -2px 0 4px rgba(0,0,0,0.06);
+}
+.data-table td.sticky-op-col {
+    position: sticky;
+    right: 0;
+    z-index: 2;
+    box-shadow: -2px 0 4px rgba(0,0,0,0.06);
+}
+.data-table tbody tr:nth-child(odd) td.sticky-op-col { background: #fff; }
+.data-table tbody tr:nth-child(even) td.sticky-op-col { background: #f9fafb; }
+.data-table tbody tr:hover td.sticky-op-col { background: #eff6ff; }
+.data-table tbody tr.selected td.sticky-op-col { background: #eff6ff; }
+
+/* 列选择器按钮 */
+.col-sel-btn {
+    padding: 4px 10px;
+    font-size: 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+    border: 1px solid #e5e7eb;
+    background: #f3f4f6;
+    color: #9ca3af;
+    user-select: none;
+}
+.col-sel-btn.active {
+    background: #eff6ff;
+    border-color: #bfdbfe;
+    color: #2563eb;
+}
+.col-sel-btn:hover { opacity: 0.85; }
+
+/* Spin 动画 */
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* 任务历史面板 */
+.task-history-item {
+    padding: 10px 14px;
+    border-bottom: 1px solid #f3f4f6;
+    cursor: pointer;
+    transition: background 0.1s;
+}
+.task-history-item:hover { background: #f9fafb; }
+.task-history-item.active { background: #eff6ff; border-left: 3px solid #2563eb; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div style="display:flex; flex-direction:column; flex:1; min-height:0;">
+
+    <!-- 统计指标行 -->
+    <div id="stats-bar" style="display:flex; align-items:center; gap:12px; padding:8px 20px; background:#fff; border-bottom:1px solid #e5e7eb; flex-shrink:0; font-size:12px;">
+        <!-- 左侧：任务摘要 + 数据文件 -->
+        <div id="task-summary-bar" style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
+            <!-- JS 动态填充任务摘要 -->
+            <span style="color:#9ca3af;">未选择任务</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
+            <span style="color:#6b7280; font-size:12px; white-space:nowrap;">数据文件：</span>
+            <select id="file-select" class="toolbar-select" style="min-width:200px; font-size:12px;" onchange="onFileChange()">
+                <option value="">— 选择文件 —</option>
+            </select>
+        </div>
+
+        <!-- 右侧：指标数据 -->
+        <div style="margin-left:auto; display:flex; align-items:center; gap:10px; flex-shrink:0;">
+            <span style="cursor:help;" onmouseenter="showMetricTooltip(this, METRIC_TIPS['准确率'])" onmouseleave="hideMetricTooltip()"><span style="color:#6b7280;">准确率:</span><span style="font-weight:600;" id="stat-accuracy">-</span></span>
+            <span style="cursor:help;" onmouseenter="showMetricTooltip(this, METRIC_TIPS['召回率'])" onmouseleave="hideMetricTooltip()"><span style="color:#6b7280;">召回率:</span><span style="font-weight:600;" id="stat-recall">-</span></span>
+            <span style="cursor:help;" onmouseenter="showMetricTooltip(this, METRIC_TIPS['精确率'])" onmouseleave="hideMetricTooltip()"><span style="color:#6b7280;">精确率:</span><span style="font-weight:600;" id="stat-precision">-</span></span>
+            <span style="cursor:help;" onmouseenter="showMetricTooltip(this, METRIC_TIPS['F1'])" onmouseleave="hideMetricTooltip()"><span style="color:#6b7280;">F1:</span><span style="font-weight:600;" id="stat-f1">-</span></span>
+            <span style="width:1px; height:14px; background:#e5e7eb;"></span>
+            <span style="background:#dcfce7; color:#166534; border-radius:4px; padding:1px 6px; font-size:11px; font-weight:600;">TP:<span id="stat-tp">0</span></span>
+            <span style="background:#fee2e2; color:#991b1b; border-radius:4px; padding:1px 6px; font-size:11px; font-weight:600;">FN:<span id="stat-fn">0</span></span>
+            <span style="background:#fef9c3; color:#854d0e; border-radius:4px; padding:1px 6px; font-size:11px; font-weight:600;">FP:<span id="stat-fp">0</span></span>
+            <span style="background:#dbeafe; color:#1e40af; border-radius:4px; padding:1px 6px; font-size:11px; font-weight:600;">TN:<span id="stat-tn">0</span></span>
+            <span style="background:#f3f4f6; color:#6b7280; border-radius:4px; padding:1px 6px; font-size:11px; font-weight:600;">UN:<span id="stat-unknown">0</span></span>
+        </div>
+    </div>
+
+    <!-- 操作栏（过滤/搜索/显示列 | 标注设置/全部标注/导出/任务历史） -->
+    <div style="display:flex; align-items:center; gap:8px; padding:8px 20px; background:#fff; border-bottom:1px solid #e5e7eb; flex-shrink:0;">
+        <!-- 左侧：过滤、列搜索、显示列 -->
+        <span style="font-size:0.8125rem; color:#6b7280; white-space:nowrap;">过滤：</span>
+        <select id="filter-match-type" class="toolbar-select" style="min-width:90px; font-size:0.8125rem; padding:4px 8px;" onchange="onFilterChange()">
+            <option value="">全部</option>
+            <option value="TP">TP</option>
+            <option value="TN">TN</option>
+            <option value="FP">FP</option>
+            <option value="FN">FN</option>
+            <option value="UNKNOWN">UNKNOWN</option>
+        </select>
+        <div style="width:1px; height:20px; background:#e5e7eb; margin:0 2px;"></div>
+        <span style="font-size:0.8125rem; color:#6b7280; white-space:nowrap;">列搜索：</span>
+        <select id="search-col-select" class="toolbar-select" style="min-width:130px; font-size:0.8125rem; padding:4px 8px;" onchange="onSearchChange()">
+            <option value="">— 选择列 —</option>
+        </select>
+        <input id="search-keyword-input" type="text" class="toolbar-select" style="min-width:180px; font-size:0.8125rem; padding:4px 8px;" placeholder="输入关键词过滤..." oninput="onSearchChange()">
+        <button class="annotate-btn-secondary" onclick="clearSearch()" style="padding:4px 10px; font-size:0.8125rem;">清除</button>
+        <div style="position:relative;" id="column-selector-wrap">
+            <button class="annotate-btn-secondary" onclick="toggleColumnSelector()" style="display:inline-flex;align-items:center;gap:5px; padding:4px 10px; font-size:0.8125rem;">
+                <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 6h18M3 14h18M3 18h18"></path></svg>
+                显示列
+            </button>
+            <div id="column-selector" style="display:none; position:absolute; right:0; top:calc(100% + 4px); z-index:200; min-width:520px; max-width:600px; max-height:400px; background:#fff; border-radius:10px; box-shadow:0 8px 32px rgba(0,0,0,0.12); border:1px solid #e5e7eb; padding:16px; overflow-y:auto;">
+                <div style="font-size:13px; font-weight:600; color:#111827; margin-bottom:10px;">选择显示列</div>
+                <div id="column-selector-buttons" style="display:flex; flex-wrap:wrap; gap:6px;">
+                    <!-- 由 JS 动态填充 -->
+                </div>
+                <div style="border-top:1px solid #f3f4f6; margin-top:14px; padding-top:12px; display:flex; justify-content:flex-end; gap:8px;">
+                    <button onclick="document.getElementById('column-selector').style.display='none'" style="padding:6px 16px; font-size:12px; color:#6b7280; background:#f3f4f6; border:1px solid #e5e7eb; border-radius:6px; cursor:pointer;">关闭</button>
+                    <button id="sync-rule-btn" onclick="syncColumnsToRule()" style="padding:6px 16px; font-size:12px; color:#fff; background:#2563eb; border:none; border-radius:6px; cursor:pointer; display:flex; align-items:center; gap:6px; font-weight:500; transition:background 0.15s;" onmouseenter="this.style.background='#1d4ed8'" onmouseleave="this.style.background='#2563eb'">
+                        <span id="sync-rule-spinner" style="display:none;"><svg style="width:14px;height:14px;animation:spin 1s linear infinite;" fill="none" viewBox="0 0 24 24"><circle style="opacity:0.25;" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path style="opacity:0.75;" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg></span>
+                        <span id="sync-rule-text">同步到规则</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右侧操作按钮 -->
+        <div style="margin-left:auto; display:flex; align-items:center; gap:8px; flex-shrink:0; position:relative;" id="annotate-settings-wrap">
+
+            <button class="annotate-btn-primary" id="create-task-btn" onclick="openCreateTaskDialog()" style="display:inline-flex;align-items:center;gap:6px;">
+                <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                创建标注任务
+            </button>
+            <button class="annotate-btn-secondary" id="export-btn" onclick="exportAnnotationData()" disabled style="display:inline-flex;align-items:center;gap:5px;" title="导出标注结果为 Excel">
+                <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                导出 Excel
+            </button>
+            <button class="annotate-btn-secondary" onclick="openTaskDrawer()" style="display:inline-flex;align-items:center;gap:5px;">
+                <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path></svg>
+                任务历史
+            </button>
+        </div>
+    </div>
+
+    <!-- 第三行：表格区域（占满整行） -->
+    <div style="flex:1; min-height:0; display:flex; flex-direction:column; overflow:hidden;">
+
+        <!-- 表格 -->
+        <div style="flex:1; overflow-x:auto; overflow-y:auto; min-height:0;">
+            <table class="data-table" id="data-table">
+                <thead id="table-head">
+                    <!-- 由 JS 动态生成 -->
+                </thead>
+                <tbody id="table-body">
+                    <tr>
+                        <td colspan="7" class="text-center text-gray-400" style="padding:64px 0;">请先选择数据文件</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 分页 -->
+        <div id="table-pagination" style="flex-shrink:0; border-top:1px solid #e5e7eb; padding:12px 20px; background:#fff; display:flex; align-items:center; justify-content:space-between;">
+            <span id="pagination-info" style="font-size:0.875rem; color:#6b7280;"></span>
+            <div id="pagination-btns" style="display:flex; gap:4px;"></div>
+        </div>
+    </div>
+
+</div>
+
+<!-- 任务历史抽屉：遮罩层 -->
+<div id="task-drawer-overlay" onclick="closeTaskDrawer()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.3); z-index:100;"></div>
+
+<!-- 任务历史抽屉：面板 -->
+<div id="task-drawer" style="position:fixed; top:0; right:0; bottom:0; width:500px; background:#fff; box-shadow:-4px 0 16px rgba(0,0,0,0.12); z-index:101; transform:translateX(100%); transition:transform 0.3s ease; display:flex; flex-direction:column;">
+    <!-- 抽屉头部 -->
+    <div style="padding:14px 16px; border-bottom:1px solid #e5e7eb; display:flex; align-items:center; justify-content:space-between; flex-shrink:0;">
+        <h3 style="font-size:0.875rem; font-weight:600; color:#374151;">标注任务历史</h3>
+        <div style="display:flex; gap:8px; align-items:center;">
+            <a href="/task-manage" id="task-manage-link" style="display:none; font-size:0.75rem; color:#3b82f6; text-decoration:underline;" target="_blank">任务管理</a>
+            <button onclick="loadTaskHistory()" style="font-size:0.75rem; color:#3b82f6; background:none; border:none; cursor:pointer; text-decoration:underline;">刷新</button>
+            <button onclick="closeTaskDrawer()" style="width:26px; height:26px; display:inline-flex; align-items:center; justify-content:center; background:#f3f4f6; border:1px solid #e5e7eb; border-radius:5px; cursor:pointer; color:#6b7280; font-size:13px; line-height:1;">✕</button>
+        </div>
+    </div>
+    <p style="font-size:11px; color:#9ca3af; padding:0 16px 8px; margin:0;">点击任务卡片，将刷新表格的标注数据和指标数据</p>
+    <!-- 任务列表 -->
+    <div id="task-history-list" style="flex:1; overflow-y:auto; min-height:0;">
+        <div style="text-align:center; color:#9ca3af; padding:32px 0; font-size:0.875rem;">暂无任务</div>
+    </div>
+</div>
+
+<!-- 创建标注任务弹框 -->
+<div id="create-task-overlay" onclick="closeCreateTaskDialog()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:500;"></div>
+<div id="create-task-dialog" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:#fff; border-radius:14px; padding:28px 32px; box-shadow:0 12px 40px rgba(0,0,0,0.18); z-index:501; min-width:600px; max-width:700px; max-height:85vh; overflow-y:auto;">
+    <h3 style="font-size:17px; font-weight:600; color:#111827; margin:0 0 22px 0;">创建标注任务</h3>
+
+    <!-- 模型选择 -->
+    <div style="margin-bottom:18px;">
+        <label style="display:block; font-size:13px; font-weight:600; color:#111827; margin-bottom:6px;">模型</label>
+        <div id="dialog-model-btn-group" style="display:flex; flex-wrap:wrap; gap:8px;">
+            <!-- JS 动态生成 -->
+        </div>
+        <input type="hidden" id="dialog-model-select" value="">
+    </div>
+
+    <!-- 策略选择 -->
+    <div style="margin-bottom:18px;">
+        <label style="display:block; font-size:13px; font-weight:600; color:#111827; margin-bottom:6px;">策略</label>
+        <div id="dialog-strategy-btn-group" style="display:flex; flex-wrap:wrap; gap:8px;">
+            <!-- JS 动态生成 -->
+        </div>
+        <input type="hidden" id="dialog-strategy-select" value="">
+    </div>
+
+    <!-- 并发数 -->
+    <div style="margin-bottom:18px;">
+        <label style="display:block; font-size:13px; font-weight:600; color:#111827; margin-bottom:6px;">并发数</label>
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <div id="dialog-concurrency-btn-group" style="display:flex; flex-wrap:wrap; gap:6px;">
+                <!-- JS 动态生成 -->
+            </div>
+            <input type="number" id="dialog-concurrency-input" value="1" min="1" max="20" style="width:60px; border:1px solid #d1d5db; border-radius:6px; padding:4px 6px; font-size:12px; text-align:center; outline:none;" onfocus="this.style.borderColor='#93c5fd'" onblur="this.style.borderColor='#d1d5db'" oninput="onConcurrencyInput()">
+        </div>
+        <input type="hidden" id="dialog-concurrency-hidden" value="1">
+    </div>
+
+    <!-- 标注范围 -->
+    <div style="margin-bottom:18px;">
+        <label style="display:block; font-size:13px; font-weight:600; color:#111827; margin-bottom:6px;">标注范围</label>
+        <div id="dialog-range-btn-group" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;">
+            <!-- JS 动态生成 -->
+        </div>
+        <!-- 自定义范围输入 -->
+        <div id="dialog-custom-range" style="display:none; align-items:center; gap:8px; margin-bottom:8px;">
+            <input type="number" id="dialog-row-start" placeholder="1" min="1" style="width:80px; border:1px solid #d1d5db; border-radius:6px; padding:4px 8px; font-size:12px; text-align:center; outline:none;" onfocus="this.style.borderColor='#93c5fd'" onblur="this.style.borderColor='#d1d5db'" oninput="updateRangeCount()">
+            <span style="font-size:12px; color:#6b7280;">~</span>
+            <input type="number" id="dialog-row-end" placeholder="最后" min="1" style="width:80px; border:1px solid #d1d5db; border-radius:6px; padding:4px 8px; font-size:12px; text-align:center; outline:none;" onfocus="this.style.borderColor='#93c5fd'" onblur="this.style.borderColor='#d1d5db'" oninput="updateRangeCount()">
+            <span style="font-size:11px; color:#9ca3af;" id="dialog-range-total-hint">共0行</span>
+        </div>
+        <!-- 动态标注数量提示 -->
+        <div style="font-size:12px; color:#2563eb; font-weight:500;" id="dialog-range-count-hint">本次将标注 0 条数据</div>
+    </div>
+
+    <!-- Prompt 选择（多选按钮组） -->
+    <div style="margin-bottom:24px;">
+        <label style="display:block; font-size:13px; font-weight:600; color:#111827; margin-bottom:6px;">Prompt <span style="font-weight:400; color:#9ca3af;">（可多选）</span></label>
+        <div id="dialog-prompt-btn-group" style="display:flex; flex-wrap:wrap; gap:8px;">
+            <!-- JS 动态生成 -->
+        </div>
+    </div>
+
+    <!-- 倒计时提示区域 -->
+    <div id="countdown-area" style="display:none; margin-bottom:16px; padding:12px 16px; background:#fffbeb; border:1px solid #fde68a; border-radius:8px; font-size:13px; color:#92400e; align-items:center; gap:8px;">
+        <svg id="countdown-spinner" style="width:16px; height:16px; animation:spin 1s linear infinite; flex-shrink:0;" fill="none" viewBox="0 0 24 24"><circle style="opacity:0.25;" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path style="opacity:0.75;" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+        <span id="countdown-text">任务将在 5s 后开始...</span>
+        <button onclick="cancelCreateCountdown()" style="margin-left:auto; padding:4px 12px; font-size:12px; background:#fff; color:#92400e; border:1px solid #fde68a; border-radius:6px; cursor:pointer; font-weight:500; white-space:nowrap;">取消</button>
+    </div>
+
+    <!-- 底部按钮 -->
+    <div style="display:flex; justify-content:flex-end; gap:10px; border-top:1px solid #f3f4f6; padding-top:18px;">
+        <button onclick="closeCreateTaskDialog()" id="cancel-create-btn" style="padding:9px 22px; font-size:13px; background:#f3f4f6; color:#374151; border:1px solid #d1d5db; border-radius:8px; cursor:pointer;">取消</button>
+        <button onclick="startCreateCountdown()" id="confirm-create-btn" style="padding:9px 22px; font-size:13px; background:#2563eb; color:#fff; border:none; border-radius:8px; cursor:pointer; font-weight:500; transition:background 0.15s;" onmouseenter="this.style.background='#1d4ed8'" onmouseleave="this.style.background='#2563eb'">创建并开始标注</button>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/workbench.js"></script>
+{% endblock %}

@@ -1,0 +1,549 @@
+{% extends "base.html" %}
+{% block title %}错题集{% endblock %}
+
+{% block head %}
+<style>
+    /* 错题集页面布局 */
+    .errorbook-layout {
+        display: flex;
+        flex: 1;
+        min-height: 0;
+    }
+    .errorbook-sidebar {
+        width: 240px;
+        min-width: 240px;
+        background: #fff;
+        border-right: 1px solid #e5e7eb;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+    .errorbook-sidebar__header {
+        padding: 16px 20px;
+        border-bottom: 1px solid #f0f0f0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    .errorbook-sidebar__header h2 {
+        font-size: 14px;
+        font-weight: 600;
+        color: #1f2937;
+    }
+    .errorbook-sidebar__add-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 12px;
+        font-size: 14px;
+        color: #3b82f6;
+        background: #eff6ff;
+        border: 1px solid #bfdbfe;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+    .errorbook-sidebar__add-btn:hover {
+        background: #dbeafe;
+    }
+    .errorbook-sidebar__list {
+        flex: 1;
+        overflow-y: auto;
+        padding: 8px;
+    }
+    .errorbook-scene-item {
+        display: flex;
+        align-items: center;
+        padding: 10px 14px;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.15s;
+        margin-bottom: 2px;
+    }
+    .errorbook-scene-item:hover {
+        background: #f9fafb;
+    }
+    .errorbook-scene-item--active {
+        background: #eff6ff;
+        color: #2563eb;
+        font-weight: 500;
+    }
+    .errorbook-scene-item__name {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    /* 右侧主内容区 */
+    .errorbook-main {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+
+    /* 筛选栏 */
+    .errorbook-filter {
+        padding: 16px 24px;
+        background: #fff;
+        border-bottom: 1px solid #e5e7eb;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+    .errorbook-filter__select {
+        padding: 6px 12px;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        font-size: 14px;
+        color: #374151;
+        background: #fff;
+        outline: none;
+        min-width: 160px;
+    }
+    .errorbook-filter__select:focus {
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 2px rgba(59,130,246,0.1);
+    }
+    .errorbook-filter__input {
+        padding: 6px 12px;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        font-size: 14px;
+        color: #374151;
+        outline: none;
+        min-width: 200px;
+    }
+    .errorbook-filter__input:focus {
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 2px rgba(59,130,246,0.1);
+    }
+    .errorbook-filter__btn {
+        padding: 6px 16px;
+        background: #3b82f6;
+        color: #fff;
+        border: none;
+        border-radius: 6px;
+        font-size: 14px;
+        cursor: pointer;
+        transition: background 0.15s;
+    }
+    .errorbook-filter__btn:hover {
+        background: #2563eb;
+    }
+    .errorbook-filter__label {
+        font-size: 14px;
+        color: #6b7280;
+        white-space: nowrap;
+    }
+
+    /* 错题列表区 */
+    .errorbook-content {
+        flex: 1;
+        overflow-y: auto;
+        padding: 16px 24px;
+    }
+    .errorbook-table {
+        width: 100%;
+        font-size: 14px;
+        border-collapse: collapse;
+    }
+    .errorbook-table thead {
+        background: #f9fafb;
+        position: sticky;
+        top: 0;
+        z-index: 1;
+    }
+    .errorbook-table th {
+        padding: 10px 12px;
+        font-weight: 500;
+        color: #6b7280;
+        text-align: left;
+        white-space: nowrap;
+        border-bottom: 1px solid #e5e7eb;
+    }
+    .errorbook-table td {
+        padding: 10px 12px;
+        color: #1f2937;
+        border-bottom: 1px solid #f3f4f6;
+        max-width: 200px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .errorbook-table tbody tr:hover {
+        background: #f9fafb;
+    }
+    .errorbook-table td:hover {
+        white-space: normal;
+        word-break: break-all;
+    }
+    /* 操作列不随hover换行，防止行高抖动 */
+    .errorbook-table td.errorbook-table__actions-td {
+        white-space: nowrap !important;
+    }
+    .errorbook-table td.errorbook-table__actions-td:hover {
+        white-space: nowrap !important;
+        word-break: keep-all;
+    }
+    .errorbook-table__actions {
+        display: inline-flex;
+        gap: 4px;
+        flex-wrap: nowrap;
+    }
+    .errorbook-table__action-btn {
+        padding: 4px 8px;
+        font-size: 12px;
+        border-radius: 4px;
+        border: none;
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+    .errorbook-table__action-btn--view {
+        background: #eff6ff;
+        color: #2563eb;
+    }
+    .errorbook-table__action-btn--view:hover {
+        background: #dbeafe;
+    }
+    .errorbook-table__action-btn--edit {
+        background: #f3f4f6;
+        color: #374151;
+    }
+    .errorbook-table__action-btn--edit:hover {
+        background: #e5e7eb;
+    }
+    .errorbook-table__action-btn--delete {
+        background: #fef2f2;
+        color: #dc2626;
+    }
+    .errorbook-table__action-btn--delete:hover {
+        background: #fee2e2;
+    }
+
+    /* 分页 */
+    .errorbook-pagination {
+        padding: 16px 24px;
+        background: #fff;
+        border-top: 1px solid #e5e7eb;
+    }
+
+    /* 空状态 */
+    .errorbook-empty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        color: #9ca3af;
+    }
+    .errorbook-empty svg {
+        width: 64px;
+        height: 64px;
+        margin-bottom: 16px;
+        opacity: 0.4;
+    }
+    .errorbook-empty p {
+        font-size: 14px;
+    }
+
+    /* 弹窗 */
+    .errorbook-modal {
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.4);
+        z-index: 100;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .errorbook-modal__card {
+        background: #fff;
+        border-radius: 12px;
+        padding: 24px;
+        width: 520px;
+        max-width: 90vw;
+        max-height: 90vh;
+        overflow-y: auto;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+    }
+    .errorbook-modal__title {
+        font-size: 16px;
+        font-weight: 600;
+        color: #1f2937;
+        margin-bottom: 16px;
+    }
+    .errorbook-form-group {
+        margin-bottom: 14px;
+    }
+    .errorbook-form-label {
+        display: block;
+        font-size: 14px;
+        font-weight: 500;
+        color: #374151;
+        margin-bottom: 4px;
+    }
+    .errorbook-form-input {
+        width: 100%;
+        padding: 8px 12px;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        font-size: 14px;
+        color: #1f2937;
+        outline: none;
+        transition: border-color 0.15s;
+    }
+    .errorbook-form-input:focus {
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+    }
+    .errorbook-form-textarea {
+        width: 100%;
+        padding: 8px 12px;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        font-size: 14px;
+        color: #1f2937;
+        outline: none;
+        resize: vertical;
+        min-height: 60px;
+        transition: border-color 0.15s;
+        font-family: inherit;
+    }
+    .errorbook-form-textarea:focus {
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+    }
+    .errorbook-form-select {
+        width: 100%;
+        padding: 8px 12px;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        font-size: 14px;
+        color: #1f2937;
+        background: #fff;
+        outline: none;
+        transition: border-color 0.15s;
+    }
+    .errorbook-form-select:focus {
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+    }
+    .errorbook-modal__actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 20px;
+    }
+    .errorbook-modal__btn {
+        padding: 6px 16px;
+        border-radius: 6px;
+        font-size: 14px;
+        cursor: pointer;
+        border: 1px solid #d1d5db;
+        background: #fff;
+        color: #374151;
+        transition: all 0.15s;
+    }
+    .errorbook-modal__btn:hover {
+        background: #f9fafb;
+    }
+    .errorbook-modal__btn--primary {
+        background: #3b82f6;
+        color: #fff;
+        border-color: #3b82f6;
+    }
+    .errorbook-modal__btn--primary:hover {
+        background: #2563eb;
+    }
+
+    /* 详情面板内容样式 */
+    .errorbook-detail-field {
+        margin-bottom: 16px;
+    }
+    .errorbook-detail-field__label {
+        font-size: 12px;
+        color: #9ca3af;
+        margin-bottom: 4px;
+    }
+    .errorbook-detail-field__value {
+        font-size: 14px;
+        color: #1f2937;
+        padding: 8px 12px;
+        background: #f9fafb;
+        border-radius: 6px;
+        white-space: pre-wrap;
+        word-break: break-all;
+    }
+
+    /* 场景编辑弹窗 */
+    .scene-edit-modal {
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.4);
+        z-index: 100;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .scene-edit-modal__card {
+        background: #fff;
+        border-radius: 12px;
+        padding: 24px;
+        width: 400px;
+        max-width: 90vw;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+    }
+    .scene-edit-modal__title {
+        font-size: 16px;
+        font-weight: 600;
+        color: #1f2937;
+        margin-bottom: 16px;
+    }
+    .scene-edit-modal__actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 20px;
+    }
+    .scene-edit-modal__btn {
+        padding: 6px 16px;
+        border-radius: 6px;
+        font-size: 14px;
+        cursor: pointer;
+        border: 1px solid #d1d5db;
+        background: #fff;
+        color: #374151;
+        transition: all 0.15s;
+    }
+    .scene-edit-modal__btn:hover {
+        background: #f9fafb;
+    }
+    .scene-edit-modal__btn--primary {
+        background: #3b82f6;
+        color: #fff;
+        border-color: #3b82f6;
+    }
+    .scene-edit-modal__btn--primary:hover {
+        background: #2563eb;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="errorbook-layout">
+    <!-- 左侧场景列表 -->
+    <div class="errorbook-sidebar">
+        <div class="errorbook-sidebar__header">
+            <h2>场景列表</h2>
+        </div>
+        <div class="errorbook-sidebar__list" id="scene-list"></div>
+        <div style="padding:8px; border-top:1px solid #f0f0f0;">
+            <button class="btn-secondary" style="width:100%; font-size:14px;" id="scene-add-btn">+ 新增场景</button>
+        </div>
+    </div>
+
+    <!-- 右侧主内容区 -->
+    <div class="errorbook-main">
+        <!-- 筛选栏 -->
+        <div class="errorbook-filter" id="filter-bar" style="display:none;">
+            <span class="errorbook-filter__label">数据集：</span>
+            <select class="errorbook-filter__select" id="filter-dataset">
+                <option value="">全部数据集</option>
+            </select>
+            <span class="errorbook-filter__label">COT名称：</span>
+            <select class="errorbook-filter__select" id="filter-cot-name">
+                <option value="">全部COT</option>
+            </select>
+            <input class="errorbook-filter__input" id="filter-search" type="text" placeholder="搜索关键词...">
+            <button class="errorbook-filter__btn" id="filter-search-btn">搜索</button>
+            <button class="errorbook-sidebar__add-btn" id="add-error-btn">
+                <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                新增错题
+            </button>
+        </div>
+
+        <!-- 错题列表 -->
+        <div class="errorbook-content" id="errorbook-content">
+            <div class="errorbook-empty" id="empty-state">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"></path></svg>
+                <p>请先选择场景查看错题</p>
+            </div>
+            <table class="errorbook-table" id="error-table" style="display:none;">
+                <thead>
+                    <tr>
+                        <th style="width:50px;">序号</th>
+                        <th>数据集</th>
+                        <th>COT名称</th>
+                        <th>原始数据</th>
+                        <th>错误原因</th>
+                        <th style="width:130px;">操作</th>
+                    </tr>
+                </thead>
+                <tbody id="error-table-body"></tbody>
+            </table>
+        </div>
+
+        <!-- 分页 -->
+        <div class="errorbook-pagination" id="pagination-container" style="display:none;"></div>
+    </div>
+</div>
+
+<!-- 新增/编辑错题弹窗 -->
+<div class="errorbook-modal" id="error-modal" style="display:none;">
+    <div class="errorbook-modal__card">
+        <div class="errorbook-modal__title" id="error-modal-title">新增错题</div>
+        <div class="errorbook-form-group">
+            <label class="errorbook-form-label">数据集</label>
+            <select class="errorbook-form-select" id="modal-dataset">
+                <option value="">请选择数据集</option>
+            </select>
+        </div>
+        <div class="errorbook-form-group">
+            <label class="errorbook-form-label">COT名称</label>
+            <select class="errorbook-form-select" id="modal-cot-name-select" onchange="handleModalCotNameChange()">
+                <option value="">请选择COT名称</option>
+            </select>
+            <input type="text" class="errorbook-form-input" id="modal-cot-name-input" placeholder="请输入自定义COT名称" style="display:none; margin-top:6px;">
+        </div>
+        <div class="errorbook-form-group">
+            <label class="errorbook-form-label">原始数据 (JSON)</label>
+            <textarea class="errorbook-form-textarea" id="modal-original-data" placeholder='请输入原始数据，如：{"key": "value"}' rows="3"></textarea>
+        </div>
+
+        <div class="errorbook-form-group">
+            <label class="errorbook-form-label">错误原因</label>
+            <textarea class="errorbook-form-textarea" id="modal-error-reason" placeholder="请输入错误原因（选填）" rows="2"></textarea>
+        </div>
+        <div class="errorbook-modal__actions">
+            <button class="errorbook-modal__btn" id="error-modal-cancel">取消</button>
+            <button class="errorbook-modal__btn errorbook-modal__btn--primary" id="error-modal-confirm">确认</button>
+        </div>
+    </div>
+</div>
+
+<!-- 新增场景弹窗 -->
+<div class="scene-edit-modal" id="scene-modal" style="display:none;">
+    <div class="scene-edit-modal__card">
+        <div class="scene-edit-modal__title">新增场景</div>
+        <div style="margin-bottom:12px;">
+            <label class="errorbook-form-label">场景名称</label>
+            <input type="text" class="errorbook-form-input" id="scene-modal-name" placeholder="请输入场景名称">
+        </div>
+        <div style="margin-bottom:0;">
+            <label class="errorbook-form-label">场景描述</label>
+            <textarea class="errorbook-form-input" id="scene-modal-desc" placeholder="请输入场景描述（选填）" rows="3" style="resize:vertical;"></textarea>
+        </div>
+        <div class="scene-edit-modal__actions">
+            <button class="scene-edit-modal__btn" id="scene-modal-cancel">取消</button>
+            <button class="scene-edit-modal__btn scene-edit-modal__btn--primary" id="scene-modal-confirm">确认</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/error_book.js"></script>
+{% endblock %}

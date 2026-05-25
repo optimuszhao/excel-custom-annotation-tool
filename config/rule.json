@@ -5,17 +5,11 @@
     "chat_answer",
     "api调用记录1",
     "api调用记录2",
-    "api调用记录3",
-    "sum合并数据",
-    "人工标注答案"
+    "cot名称"
   ],
   "annotate_fields": [
     "chat_question",
-    "chat_answer",
-    "api调用记录1",
-    "api调用记录2",
-    "api调用记录3",
-    "sum合并数据"
+    "chat_answer"
   ],
   "answer_field": "人工标注答案",
   "result_label_field": "大模型标注答案"

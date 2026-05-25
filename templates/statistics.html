@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+{% block title %}统计数据{% endblock %}
+
+{% block head %}
+<style>
+/* ========== 统计页面专用样式 ========== */
+.overview-card {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    padding: 20px 24px;
+    text-align: center;
+}
+.overview-card .card-value {
+    font-size: 28px;
+    font-weight: 700;
+    color: #111827;
+    line-height: 1.2;
+}
+.overview-card .card-label {
+    font-size: 12px;
+    color: #6b7280;
+    margin-top: 4px;
+}
+.overview-card.accent-blue .card-value { color: #2563eb; }
+.overview-card.accent-green .card-value { color: #16a34a; }
+.overview-card.accent-purple .card-value { color: #7c3aed; }
+.overview-card.accent-orange .card-value { color: #d97706; }
+
+.stat-card {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    overflow: hidden;
+}
+.stat-card__header {
+    padding: 14px 18px 10px;
+    border-bottom: 1px solid #f3f4f6;
+    font-weight: 600;
+    font-size: 14px;
+    color: #374151;
+}
+.stat-card__body {
+    padding: 0;
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+}
+.data-table th {
+    background: #f9fafb;
+    color: #6b7280;
+    font-weight: 600;
+    font-size: 0.875rem;
+    padding: 10px 14px;
+    text-align: left;
+    border-bottom: 1px solid #e5e7eb;
+    white-space: nowrap;
+}
+.data-table td {
+    padding: 10px 14px;
+    border-bottom: 1px solid #f3f4f6;
+    vertical-align: middle;
+    color: #374151;
+}
+.data-table tr:last-child td { border-bottom: none; }
+.data-table tr:hover td { background: #f9fafb; }
+
+.empty-tip {
+    text-align: center;
+    color: #9ca3af;
+    padding: 32px 0;
+    font-size: 0.875rem;
+}
+
+.badge-accuracy {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+}
+.badge-accuracy.high { background: #dcfce7; color: #166534; }
+.badge-accuracy.mid  { background: #fef9c3; color: #854d0e; }
+.badge-accuracy.low  { background: #fee2e2; color: #991b1b; }
+.badge-accuracy.none { background: #f3f4f6; color: #6b7280; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="p-6" style="flex:1; overflow-y:auto;">
+    <!-- 页头 -->
+    <div class="flex justify-between items-center mb-6">
+        <div>
+            <h2 style="font-size:20px; font-weight:700; color:#1f2937;">统计数据</h2>
+            <p style="font-size:0.875rem; color:#6b7280; margin-top:4px;">全局标注任务统计汇总</p>
+        </div>
+        <div class="flex items-center gap-3">
+            <label style="font-size:0.875rem; color:#6b7280;">按场景过滤：</label>
+            <select id="sceneFilter" style="padding:0.5rem 0.75rem; border:1px solid #d1d5db; border-radius:0.5rem; font-size:0.875rem; background:#fff; color:#374151; min-width:160px; outline:none;" onchange="onSceneFilterChange()">
+                <option value="">全部场景</option>
+            </select>
+            <button style="font-size:0.875rem; color:#2563eb; background:none; border:none; cursor:pointer; text-decoration:underline;" onclick="loadStatistics()">刷新</button>
+        </div>
+    </div>
+
+    <!-- 概览卡片：总场景数 / 总文件数 / 总任务数 / 平均准确率 -->
+    <div class="grid grid-cols-4 gap-4 mb-6" id="overviewCards">
+        <div class="overview-card accent-blue">
+            <div class="card-value" id="overview-scenes">-</div>
+            <div class="card-label">场景总数</div>
+        </div>
+        <div class="overview-card accent-green">
+            <div class="card-value" id="overview-files">-</div>
+            <div class="card-label">文件总数</div>
+        </div>
+        <div class="overview-card accent-purple">
+            <div class="card-value" id="overview-tasks">-</div>
+            <div class="card-label">已完成任务</div>
+        </div>
+        <div class="overview-card accent-orange">
+            <div class="card-value" id="overview-accuracy">-</div>
+            <div class="card-label">平均准确率</div>
+        </div>
+    </div>
+
+    <!-- 场景汇总表 -->
+    <div class="stat-card mb-6">
+        <div class="stat-card__header">场景汇总</div>
+        <div class="stat-card__body">
+            <table class="data-table" id="scenesTable">
+                <thead>
+                    <tr>
+                        <th>场景名称</th>
+                        <th>文件数</th>
+                        <th>总行数</th>
+                        <th>已完成任务数</th>
+                        <th>平均准确率</th>
+                    </tr>
+                </thead>
+                <tbody id="scenesTableBody">
+                    <tr><td colspan="5" class="empty-tip">加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- 模型对比表 -->
+    <div class="stat-card mb-6">
+        <div class="stat-card__header">模型对比</div>
+        <div class="stat-card__body">
+            <table class="data-table" id="modelsTable">
+                <thead>
+                    <tr>
+                        <th>模型</th>
+                        <th>已完成任务数</th>
+                        <th>平均准确率</th>
+                        <th>平均查全率</th>
+                        <th>平均F1分数</th>
+                    </tr>
+                </thead>
+                <tbody id="modelsTableBody">
+                    <tr><td colspan="5" class="empty-tip">加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- 策略对比表 -->
+    <div class="stat-card mb-6">
+        <div class="stat-card__header">策略对比</div>
+        <div class="stat-card__body">
+            <table class="data-table" id="strategiesTable">
+                <thead>
+                    <tr>
+                        <th>策略</th>
+                        <th>已完成任务数</th>
+                        <th>平均准确率</th>
+                    </tr>
+                </thead>
+                <tbody id="strategiesTableBody">
+                    <tr><td colspan="3" class="empty-tip">加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- 最近标注任务 -->
+    <div class="stat-card">
+        <div class="stat-card__header">最近标注任务（最近10条已完成）</div>
+        <div class="stat-card__body">
+            <table class="data-table" id="recentTable">
+                <thead>
+                    <tr>
+                        <th>任务ID</th>
+                        <th>模型</th>
+                        <th>策略</th>
+                        <th>标注行数</th>
+                        <th>准确率</th>
+                        <th>F1分数</th>
+                        <th>完成时间</th>
+                    </tr>
+                </thead>
+                <tbody id="recentTableBody">
+                    <tr><td colspan="7" class="empty-tip">加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/statistics.js"></script>
+{% endblock %}

@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}任务管理{% endblock %}
+{% block content %}
+<div class="p-6" style="flex:1; overflow-y:auto;">
+    <!-- 顶部：返回工作台按钮 + 标题 -->
+    <div class="flex items-center mb-6">
+        <a href="/workbench" id="backBtn" class="btn-secondary mr-4">← 返回工作台</a>
+        <h2 style="font-size:20px; font-weight:700; color:#1f2937;">标注任务管理</h2>
+        <span id="fileInfo" style="margin-left:1rem; font-size:0.875rem; color:#6b7280;"></span>
+    </div>
+
+    <!-- 操作栏：删除选中 + 对比按钮 -->
+    <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center gap-3">
+            <button id="batchDeleteBtn" style="display:none; background:#dc2626; color:#fff; border:none; border-radius:6px; padding:6px 16px; font-size:13px; font-weight:500; cursor:pointer; transition:background 0.2s;"
+                onmouseover="this.style.background='#b91c1c'" onmouseout="this.style.background='#dc2626'"
+                onclick="deleteSelectedTasks()">删除选中</button>
+            <span id="selectedCountInfo" style="font-size:0.875rem; color:#6b7280; display:none;">已选 <b id="selectedCountNum">0</b> 项</span>
+        </div>
+        <div class="flex gap-2">
+            <button id="compareBtn" class="btn-primary btn-sm" disabled onclick="doCompare()">对比选中任务</button>
+        </div>
+    </div>
+
+    <!-- 任务列表表格 -->
+    <div class="card mb-6 overflow-x-auto">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th style="width:40px; text-align:center;"><input type="checkbox" id="selectAllCb" onchange="toggleSelectAll(this)"></th>
+                    <th>任务ID</th>
+                    <th>创建时间</th>
+                    <th>模型</th>
+                    <th>策略</th>
+                    <th>并发</th>
+                    <th>Prompt角色</th>
+                    <th>标注行数</th>
+                    <th>成功/失败</th>
+                    <th>准确率</th>
+                    <th>查全率</th>
+                    <th>查准率</th>
+                    <th>F1</th>
+                    <th>状态</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody id="taskTableBody"></tbody>
+        </table>
+    </div>
+    <div id="pagination" style="flex-shrink:0; border-top:1px solid #e5e7eb; padding:12px 20px; background:#fff; display:flex; align-items:center; justify-content:space-between; border-radius:0 0 8px 8px;">
+        <span id="pagination-info" style="font-size:0.875rem; color:#6b7280;"></span>
+        <div id="pagination-btns" style="display:flex; gap:4px;"></div>
+    </div>
+
+    <!-- 对比面板 -->
+    <div id="comparePanel" class="card mt-6 p-6" style="display:none;">
+        <h3 style="font-size:1rem; font-weight:600; margin-bottom:1rem;">任务对比</h3>
+        <div id="compareContent"></div>
+    </div>
+</div>
+
+<!-- 任务详情弹框 -->
+<div id="taskDetailModal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.45); z-index:45; align-items:center; justify-content:center;">
+    <div style="background:#fff; border-radius:12px; min-width:560px; max-width:720px; width:90%; max-height:85vh; display:flex; flex-direction:column; box-shadow:0 20px 60px rgba(0,0,0,0.2);">
+        <!-- 弹框头部 -->
+        <div style="display:flex; align-items:center; justify-content:space-between; padding:20px 24px; border-bottom:1px solid #e5e7eb;">
+            <h3 id="detailModalTitle" style="font-size:16px; font-weight:700; color:#1f2937;">任务详情</h3>
+            <button onclick="closeTaskDetailModal()" style="background:none; border:none; font-size:20px; color:#9ca3af; cursor:pointer; padding:4px 8px; line-height:1;" onmouseover="this.style.color='#374151'" onmouseout="this.style.color='#9ca3af'">&times;</button>
+        </div>
+        <!-- 弹框内容 -->
+        <div id="detailModalBody" style="padding:20px 24px; overflow-y:auto; flex:1;">
+            <!-- 基本信息 -->
+            <div style="margin-bottom:20px;">
+                <h4 style="font-size:14px; font-weight:600; color:#374151; margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid #f3f4f6;">基本信息</h4>
+                <div id="detailBasicInfo" style="display:grid; grid-template-columns:1fr 1fr; gap:10px 24px;"></div>
+            </div>
+            <!-- 测试指标 -->
+            <div style="margin-bottom:20px;">
+                <h4 style="font-size:14px; font-weight:600; color:#374151; margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid #f3f4f6;">测试指标</h4>
+                <div id="detailMetricsInfo"></div>
+            </div>
+        </div>
+        <!-- 弹框底部 -->
+        <div style="display:flex; justify-content:flex-end; gap:12px; padding:16px 24px; border-top:1px solid #e5e7eb;">
+            <button onclick="closeTaskDetailModal()" style="background:#f3f4f6; color:#374151; border:none; border-radius:6px; padding:8px 20px; font-size:13px; font-weight:500; cursor:pointer;">关闭</button>
+            <button id="rerunBtn" onclick="rerunTask()" style="background:#2563eb; color:#fff; border:none; border-radius:6px; padding:8px 20px; font-size:13px; font-weight:500; cursor:pointer; transition:background 0.2s;"
+                onmouseover="this.style.background='#1d4ed8'" onmouseout="this.style.background='#2563eb'">重新运行</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="/static/js/task_manage.js"></script>
+{% endblock %}
