@@ -669,7 +669,8 @@ def annotate_rows_concurrently(valid_items: list, model_config_name: str, prompt
     def run_one(item: dict) -> dict:
         row_id = item["row_id"]
         try:
-            result = annotate_one_row(item["data"], model_config_name, prompts, strategy_name, concurrency)
+            # 行级并发由 ThreadPoolExecutor 保证，单行内部不做并发
+            result = annotate_one_row(item["data"], model_config_name, prompts, strategy_name, concurrency=1)
             return {"row_id": row_id, "result": result}
         except Exception as exc:
             return {"row_id": row_id, "error": str(exc)}
@@ -745,7 +746,13 @@ def recover_stale_annotation_tasks() -> int:
         with TASK_SCHEDULER_LOCK:
             for task_id in stale_ids:
                 TASK_RUNNING_IDS.discard(task_id)
-            TASK_ACTIVE_BY_COMBO.clear()
+            # 只减少超时任务对应的 combo 计数（不要 clear 全部）
+            for task in running_tasks:
+                if task.id in stale_ids and task.model_name:
+                    TASK_ACTIVE_BY_COMBO[task.model_name] = max(0,
+                        TASK_ACTIVE_BY_COMBO.get(task.model_name, 0) - 1)
+                    if TASK_ACTIVE_BY_COMBO.get(task.model_name, 0) == 0:
+                        TASK_ACTIVE_BY_COMBO.pop(task.model_name, None)
         recovered = db.query(AnnotationTask).filter(AnnotationTask.id.in_(stale_ids)).update(
             {AnnotationTask.status: "pending", AnnotationTask.started_at: None},
             synchronize_session=False,
@@ -889,7 +896,10 @@ def run_annotation_task(task_id: str):
         db = SessionLocal()
         try:
             task = db.query(AnnotationTask).filter(AnnotationTask.id == task_id).first()
-            if not task or task.status == "cancelled":
+            if not task:
+                return
+            if task.status == "cancelled":
+                model_name = task.model_name
                 return
             model_name = task.model_name
             row_id = task.row_id
@@ -922,8 +932,18 @@ def run_annotation_task(task_id: str):
                     return
 
                 db_row = db.query(ExcelRow).filter(ExcelRow.id == row_id).first()
+                if not db_row:
+                    # ExcelRow 已被删除，跳过写入
+                    task.status = "success"
+                    task.result = json.dumps(result, ensure_ascii=False)
+                    task.label = result.get(result_label_field, "")
+                    task.match_type = "DELETED_ROW"
+                    task.duration_ms = duration_ms
+                    task.finished_at = finished
+                    db.commit()
+                    return
                 label = result.get(result_label_field, "")
-                match_type = calc_match_type(db_row.human_answer if db_row else "", label)
+                match_type = calc_match_type(db_row.human_answer, label)
                 result_json = json.dumps(result, ensure_ascii=False)
 
                 existing = (
@@ -1581,12 +1601,15 @@ def custom_full_annotate(body: dict):
             result = item.get("result", {})
             result["全量标注耗时(ms)"] = total_duration_ms
             result_json = json.dumps(result, ensure_ascii=False, default=str)
+            # 计算真实 match_type
+            db_row = db.query(ExcelRow).filter(ExcelRow.id == row_id).first()
+            match_type = calc_match_type(db_row.human_answer if db_row else "", label)
             existing = existing_by_row.get(row_id)
             if existing:
                 existing.prompt_version = "custom_full_dataset_mock"
                 existing.result = result_json
                 existing.label = label
-                existing.match_type = "UNKNOWN"
+                existing.match_type = match_type
                 existing.duration_ms = row_duration_ms
                 existing.created_at = finished
             else:
@@ -1596,7 +1619,7 @@ def custom_full_annotate(body: dict):
                     prompt_version="custom_full_dataset_mock",
                     result=result_json,
                     label=label,
-                    match_type="UNKNOWN",
+                    match_type=match_type,
                     duration_ms=row_duration_ms,
                     created_at=finished,
                 ))
