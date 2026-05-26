@@ -59,9 +59,13 @@ TASK_RUNNING_IDS = set()
 TASK_ACTIVE_BY_COMBO = defaultdict(int)
 TASK_RECOVERY_STOP = Event()
 
+# 内存维护：当前正在标注的行ID（替代 DB 持久化）—— 字典在此声明，锁在 threading import 后初始化
+TASK_CURRENT_ROWS: Dict[str, set] = {}  # task_id → {row_id1, row_id2, ...}
+
 # 全局标注并发信号量 - 最大 20 个并行标注 worker
 import threading as _threading
 GLOBAL_ANNOTATION_SEMAPHORE = _threading.Semaphore(20)
+TASK_CURRENT_ROWS_LOCK = _threading.Lock()  # 保护 TASK_CURRENT_ROWS 的线程锁
 TASK_RECOVERY_THREAD = None
 TASK_STALE_RUNNING_SECONDS = 30 * 60
 
@@ -158,13 +162,22 @@ def _sync_all_db_to_local():
                 error_dir = DATA_DIR / "error_books"
                 error_dir.mkdir(parents=True, exist_ok=True)
                 error_file_path = error_dir / f"{scene_name}_errors.jsonl"
+                # 批量通过 row_id JOIN excel_rows 获取 original_data
+                _eb_row_ids = [eb.row_id for eb in errors if eb.row_id]
+                _eb_row_data_map = {}
+                if _eb_row_ids:
+                    for _er in db.query(ExcelRow).filter(ExcelRow.id.in_(_eb_row_ids)).all():
+                        _eb_row_data_map[_er.id] = _er.data
                 lines = []
                 for eb in errors:
+                    # 降级策略：有 row_id 走 JOIN，无 row_id 读 original_data
+                    _od_source = _eb_row_data_map.get(eb.row_id) if eb.row_id else None
+                    _od_raw = _od_source or eb.original_data
                     original_data = None
                     try:
-                        original_data = json.loads(eb.original_data) if eb.original_data else None
+                        original_data = json.loads(_od_raw) if _od_raw else None
                     except (json.JSONDecodeError, TypeError):
-                        original_data = eb.original_data
+                        original_data = _od_raw
                     record = {
                         "id": eb.id,
                         "cot_name": eb.cot_name,
@@ -299,6 +312,27 @@ async def lifespan(app: FastAPI):
                 print("[DB Migration] annotation_tasks.current_row_id 升级完成（INTEGER -> TEXT）")
     except Exception as e:
         print(f"[DB Migration] annotation_tasks.current_row_id 升级: {e}")
+    # DB Migration: annotation_results 唯一约束
+    try:
+        with engine.connect() as conn:
+            existing_indexes = conn.execute(text("PRAGMA index_list(annotation_results)")).fetchall()
+            index_names = [row[1] for row in existing_indexes]
+            if "uq_task_row_prompt" not in index_names:
+                conn.execute(text("""
+                    DELETE FROM annotation_results
+                    WHERE id NOT IN (
+                        SELECT MAX(id) FROM annotation_results
+                        GROUP BY task_id, row_id, prompt_name
+                    )
+                """))
+                conn.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_task_row_prompt "
+                    "ON annotation_results(task_id, row_id, prompt_name)"
+                ))
+                conn.commit()
+                print("[DB Migration] annotation_results 唯一约束创建完成")
+    except Exception as e:
+        print(f"[DB Migration] annotation_results 唯一约束迁移异常: {e}")
     # 初始化默认场景和规则
     init_default_scene_and_rules()
     # 启动时扫描本地文件并同步到数据库
@@ -423,6 +457,35 @@ def normalize_binary_label(value: str) -> str:
     return ""
 
 
+def upsert_annotation_result(db, task_id, row_id: int, prompt_name: str, **kwargs):
+    """
+    UPSERT AnnotationResult：存在则更新，不存在则插入。
+    task_id 为 None 时用 '__legacy__' 代替。
+    prompt_name 为 None 时用 '__default__' 代替。
+    """
+    safe_task_id = task_id if task_id is not None else "__legacy__"
+    safe_prompt_name = prompt_name if prompt_name is not None else "__default__"
+    existing = db.query(AnnotationResult).filter(
+        AnnotationResult.task_id == safe_task_id,
+        AnnotationResult.row_id == row_id,
+        AnnotationResult.prompt_name == safe_prompt_name,
+    ).first()
+    if existing:
+        for key, value in kwargs.items():
+            if hasattr(existing, key):
+                setattr(existing, key, value)
+        return existing
+    else:
+        obj = AnnotationResult(
+            task_id=safe_task_id,
+            row_id=row_id,
+            prompt_name=safe_prompt_name,
+            **kwargs,
+        )
+        db.add(obj)
+        return obj
+
+
 def calc_match_type(human_answer: str, label: str) -> str:
     h = normalize_binary_label(human_answer)
     l_ = normalize_binary_label(label)
@@ -439,6 +502,35 @@ def calc_match_type(human_answer: str, label: str) -> str:
 
 def ratio(numerator: int, denominator: int) -> float:
     return round(numerator / denominator, 4) if denominator > 0 else 0
+
+
+def calc_task_stats(task_id: str, db) -> dict:
+    """从 AnnotationResult 动态聚合任务统计指标"""
+    # 优先使用 __merged__ 结果（多 Prompt 场景避免重复计数）
+    results = db.query(AnnotationResult).filter(
+        AnnotationResult.task_id == task_id,
+        AnnotationResult.match_type.isnot(None),
+        AnnotationResult.prompt_name == "__merged__",
+    ).all()
+    # 降级：没有 __merged__ 则使用单 prompt 结果（排除 __error__）
+    if not results:
+        results = db.query(AnnotationResult).filter(
+            AnnotationResult.task_id == task_id,
+            AnnotationResult.match_type.isnot(None),
+            AnnotationResult.prompt_name != "__error__",
+        ).all()
+    tp = sum(1 for r in results if r.match_type == "TP")
+    fn = sum(1 for r in results if r.match_type == "FN")
+    fp = sum(1 for r in results if r.match_type == "FP")
+    tn = sum(1 for r in results if r.match_type == "TN")
+    unknown = sum(1 for r in results if r.match_type not in ("TP", "FN", "FP", "TN"))
+    valid = len(results) - unknown
+    return {
+        "accuracy": ratio(tp + tn, valid),
+        "recall": ratio(tp, tp + fn),
+        "precision": ratio(tp, tp + fp),
+        "f1_score": ratio(2 * tp, 2 * tp + fp + fn),
+    }
 
 
 def format_percent_ratio(value: Optional[float]) -> str:
@@ -465,10 +557,16 @@ def sanitize_export_filename_part(value: str, fallback: str) -> str:
     return sanitized or fallback
 
 
-def resolve_export_source_file_name(rows: list) -> str:
+def resolve_export_source_file_name(rows: list, db=None) -> str:
+    """通过 file_id JOIN excel_files 获取文件名，降级读取 row.file_name"""
+    file_ids = list({r.file_id for r in rows if r.file_id})
+    file_name_map = {}
+    if db and file_ids:
+        excel_files = db.query(ExcelFile).filter(ExcelFile.id.in_(file_ids)).all()
+        file_name_map = {ef.id: ef.file_name for ef in excel_files}
     names = []
     for row in rows:
-        name = (row.file_name or "").strip()
+        name = (file_name_map.get(row.file_id, "") or row.file_name or "").strip()
         if name:
             names.append(name)
     if not names:
@@ -586,7 +684,6 @@ def import_dataframe(filename: str, df: pd.DataFrame) -> int:
                 human_answer = str(human_answer).strip()
 
             db.add(ExcelRow(
-                file_name=filename,
                 row_index=int(idx),
                 data=json.dumps(row_dict, ensure_ascii=False, default=str),
                 human_answer=human_answer,
@@ -890,113 +987,29 @@ def release_scheduled_task(task_id: str, model_name: str):
 
 
 def run_annotation_task(task_id: str):
-    model_name = ""
-    started = datetime.utcnow()
+    """旧版单行标注入口，已弃用。新任务统一走 execute_workbench_annotation_task。"""
+    # 兼容旧格式任务：若 row_data 不是列表格式且 row_id 有值，转为列表格式
+    db = SessionLocal()
     try:
-        db = SessionLocal()
-        try:
-            task = db.query(AnnotationTask).filter(AnnotationTask.id == task_id).first()
-            if not task:
-                return
-            if task.status == "cancelled":
-                model_name = task.model_name
-                return
-            model_name = task.model_name
-            row_id = task.row_id
-            model_config = task.model_config
-            strategy = task.strategy
-            task_concurrency = clamp_task_concurrency(task.concurrency)
-            row_data = json.loads(task.row_data) if task.row_data else {}
-            prompts = json.loads(task.prompts) if task.prompts else []
-            knowledge = json.loads(task.knowledge) if task.knowledge else []
-            prompt_version = task.prompt_version
-        finally:
-            db.close()
-
-        rule = load_rule()
-        result_label_field = rule.get("result_label_field", "label")
-        try:
-            result = annotate_one_row(row_data, model_config, prompts, strategy, task_concurrency, knowledge)
-            finished = datetime.utcnow()
-            duration_ms = int((finished - started).total_seconds() * 1000)
-
-            db = SessionLocal()
+        task = db.query(AnnotationTask).filter(AnnotationTask.id == task_id).first()
+        if not task:
+            return
+        if task.row_id and task.row_data:
             try:
-                task = db.query(AnnotationTask).filter(AnnotationTask.id == task_id).first()
-                if not task:
-                    return
-                if task.status == "cancelled":
-                    task.finished_at = finished
-                    task.duration_ms = duration_ms
+                parsed = json.loads(task.row_data)
+                if not isinstance(parsed, list):
+                    task.row_data = json.dumps([task.row_id])
                     db.commit()
-                    return
-
-                db_row = db.query(ExcelRow).filter(ExcelRow.id == row_id).first()
-                if not db_row:
-                    # ExcelRow 已被删除，跳过写入
-                    task.status = "success"
-                    task.result = json.dumps(result, ensure_ascii=False)
-                    task.label = result.get(result_label_field, "")
-                    task.match_type = "DELETED_ROW"
-                    task.duration_ms = duration_ms
-                    task.finished_at = finished
-                    db.commit()
-                    return
-                label = result.get(result_label_field, "")
-                match_type = calc_match_type(db_row.human_answer, label)
-                result_json = json.dumps(result, ensure_ascii=False)
-
-                existing = (
-                    db.query(AnnotationResult)
-                    .filter(
-                        AnnotationResult.row_id == row_id,
-                        AnnotationResult.model_name == model_name,
-                    )
-                    .first()
-                )
-                if existing:
-                    existing.prompt_version = prompt_version
-                    existing.result = result_json
-                    existing.label = label
-                    existing.match_type = match_type
-                    existing.duration_ms = duration_ms
-                    existing.created_at = finished
-                else:
-                    db.add(AnnotationResult(
-                        row_id=row_id,
-                        model_name=model_name,
-                        prompt_version=prompt_version,
-                        result=result_json,
-                        label=label,
-                        match_type=match_type,
-                        duration_ms=duration_ms,
-                        created_at=finished,
-                    ))
-
-                task.status = "success"
-                task.result = result_json
-                task.label = label
-                task.match_type = match_type
-                task.duration_ms = duration_ms
-                task.finished_at = finished
+            except (json.JSONDecodeError, TypeError):
+                task.row_data = json.dumps([task.row_id])
                 db.commit()
-            finally:
-                db.close()
-        except Exception as exc:
-            finished = datetime.utcnow()
-            db = SessionLocal()
-            try:
-                task = db.query(AnnotationTask).filter(AnnotationTask.id == task_id).first()
-                if task and task.status != "cancelled":
-                    task.status = "failed"
-                    task.error = str(exc)
-                    task.duration_ms = int((finished - started).total_seconds() * 1000)
-                    task.finished_at = finished
-                    db.commit()
-            finally:
-                db.close()
+        elif task.row_id and not task.row_data:
+            task.row_data = json.dumps([task.row_id])
+            db.commit()
     finally:
-        release_scheduled_task(task_id, model_name)
+        db.close()
+    # 委托给新版执行器
+    execute_workbench_annotation_task(task_id)
 
 
 def run_annotation_task_batch(task_ids: list, concurrency: int):
@@ -1012,14 +1025,11 @@ def run_annotation_task_batch(task_ids: list, concurrency: int):
 def serialize_task(task: AnnotationTask) -> dict:
     return {
         "id": task.id,
-        "row_id": task.row_id,
         "model_name": task.model_name,
         "model_config": task.model_config,
         "strategy": task.strategy,
         "concurrency": task.concurrency,
         "status": task.status,
-        "label": task.label,
-        "match_type": task.match_type,
         "error": task.error,
         "duration_ms": task.duration_ms,
         "duration_text": format_duration_ms(task.duration_ms),
@@ -1117,12 +1127,20 @@ async def save_display_columns_to_rule(request: Request):
     if scene_id:
         db = SessionLocal()
         try:
+            # NULL 防护：scene_id 非空时用 == 过滤
             rule_config = db.query(RuleConfig).filter(RuleConfig.scene_id == scene_id).first()
             if rule_config:
                 rule_config.excel_fields = json.dumps(columns, ensure_ascii=False)
                 rule_config.updated_at = datetime.utcnow()
             else:
-                # RuleConfig 不存在则创建
+                # 二次确认：防止并发场景下重复插入
+                if scene_id is None:
+                    existing = db.query(RuleConfig).filter(RuleConfig.scene_id.is_(None)).first()
+                    if existing:
+                        existing.excel_fields = json.dumps(columns, ensure_ascii=False)
+                        existing.updated_at = datetime.utcnow()
+                        db.commit()
+                        return {"success": True, "excel_fields": columns}
                 rule_config = RuleConfig(
                     scene_id=scene_id,
                     excel_fields=json.dumps(columns, ensure_ascii=False),
@@ -1179,10 +1197,12 @@ def query_filtered_sorted_rows(
             .distinct()
             .all()
         ]
+        # 通过子查询 JOIN excel_files 搜索文件名
+        _ef_ids_subq = db.query(ExcelFile.id).filter(ExcelFile.file_name.contains(search)).subquery()
         search_conditions = [
             ExcelRow.data.contains(search),
             ExcelRow.human_answer.contains(search),
-            ExcelRow.file_name.contains(search),
+            ExcelRow.file_id.in_(_ef_ids_subq),
         ]
         if ann_row_ids:
             search_conditions.append(ExcelRow.id.in_(ann_row_ids))
@@ -1286,10 +1306,12 @@ async def get_rows(
                 .distinct()
                 .all()
             ]
+            # 通过子查询 JOIN excel_files 搜索文件名
+            _ef_ids_subq = db.query(ExcelFile.id).filter(ExcelFile.file_name.contains(search)).subquery()
             search_conditions = [
                 ExcelRow.data.contains(search),
                 ExcelRow.human_answer.contains(search),
-                ExcelRow.file_name.contains(search),
+                ExcelRow.file_id.in_(_ef_ids_subq),
             ]
             if ann_row_ids:
                 search_conditions.append(ExcelRow.id.in_(ann_row_ids))
@@ -1497,7 +1519,6 @@ def annotate(body: dict):
     concurrency: int = clamp_task_concurrency(body.get("concurrency", 1))
 
     model_name = get_model_display_name(model_config_name, strategy_name)
-    prompt_version = get_prompt_version(prompts)
 
     db = SessionLocal()
     try:
@@ -1515,7 +1536,6 @@ def annotate(body: dict):
                 existing_task = (
                     db.query(AnnotationTask)
                     .filter(
-                        AnnotationTask.row_id == row_id,
                         AnnotationTask.model_name == model_name,
                         AnnotationTask.status.in_(list(TASK_ACTIVE_STATUSES)),
                     )
@@ -1531,13 +1551,11 @@ def annotate(body: dict):
 
                 task = AnnotationTask(
                     id=str(uuid4()),
-                    row_id=row_id,
                     model_name=model_name,
                     model_config=model_config_name,
                     strategy=strategy_name,
                     concurrency=concurrency,
-                    prompt_version=prompt_version,
-                    row_data=json.dumps(row_data, ensure_ascii=False, default=str),
+                    row_data=json.dumps([row_id], ensure_ascii=False),
                     prompts=json.dumps(prompts, ensure_ascii=False, default=str),
                     knowledge=json.dumps(knowledge, ensure_ascii=False, default=str),
                     status="pending",
@@ -1613,8 +1631,11 @@ def custom_full_annotate(body: dict):
                 existing.duration_ms = row_duration_ms
                 existing.created_at = finished
             else:
-                db.add(AnnotationResult(
+                upsert_annotation_result(
+                    db,
+                    task_id=None,
                     row_id=row_id,
+                    prompt_name=None,
                     model_name=model_name,
                     prompt_version="custom_full_dataset_mock",
                     result=result_json,
@@ -1622,7 +1643,7 @@ def custom_full_annotate(body: dict):
                     match_type=match_type,
                     duration_ms=row_duration_ms,
                     created_at=finished,
-                ))
+                )
 
         db.commit()
         return {
@@ -1673,10 +1694,17 @@ async def delete_rows(body: dict):
         if not existing_ids:
             return {"success": False, "message": "数据不存在或已删除"}
 
+        # 通过 AnnotationResult 桥接查找关联的任务ID（已废弃 task.row_id，改用 result 表关联）
+        task_ids = [
+            r[0] for r in db.query(AnnotationResult.task_id)
+            .filter(AnnotationResult.row_id.in_(existing_ids))
+            .distinct().all()
+        ]
+
         active_count = (
             db.query(AnnotationTask)
             .filter(
-                AnnotationTask.row_id.in_(existing_ids),
+                AnnotationTask.id.in_(task_ids),
                 AnnotationTask.status.in_(list(TASK_ACTIVE_STATUSES)),
             )
             .count()
@@ -1690,17 +1718,12 @@ async def delete_rows(body: dict):
                 "message": f"有 {active_count} 个标注任务正在执行或排队",
             }
 
-        task_ids = [
-            r[0] for r in db.query(AnnotationTask.id)
-            .filter(AnnotationTask.row_id.in_(existing_ids))
-            .all()
-        ]
         annotation_count = db.query(AnnotationResult).filter(
             AnnotationResult.row_id.in_(existing_ids)
         ).delete(synchronize_session=False)
         task_count = db.query(AnnotationTask).filter(
-            AnnotationTask.row_id.in_(existing_ids)
-        ).delete(synchronize_session=False)
+            AnnotationTask.id.in_(task_ids)
+        ).delete(synchronize_session=False) if task_ids else 0
         row_count = db.query(ExcelRow).filter(
             ExcelRow.id.in_(existing_ids)
         ).delete(synchronize_session=False)
@@ -1739,10 +1762,20 @@ async def list_annotation_tasks(
         query = db.query(AnnotationTask)
         if model:
             query = query.filter(AnnotationTask.model_name == model)
-        if ids:
-            query = query.filter(AnnotationTask.row_id.in_(ids))
         if active_only:
             query = query.filter(AnnotationTask.status.in_(list(TASK_ACTIVE_STATUSES)))
+        # 按行ID筛选：通过 AnnotationResult 桥接查找关联任务
+        if ids:
+            bridged_task_ids = [
+                r[0] for r in db.query(AnnotationResult.task_id)
+                .filter(AnnotationResult.row_id.in_(ids))
+                .distinct().all()
+            ]
+            if bridged_task_ids:
+                query = query.filter(AnnotationTask.id.in_(bridged_task_ids))
+            else:
+                # 无匹配任务，返回空列表
+                return {"tasks": []}
         limit = max(500, len(ids)) if ids else 500
         tasks = query.order_by(AnnotationTask.created_at.desc()).limit(limit).all()
         return {"tasks": [serialize_task(task) for task in tasks]}
@@ -1962,6 +1995,7 @@ def scan_and_sync_local_files():
                     print(f"⚠ 解析规则文件 {rule_json_file} 失败: {parse_err}")
                     continue
 
+                # NULL 防护：scene.id 非空，但仍需二次确认防并发
                 existing_rule = db.query(RuleConfig).filter(RuleConfig.scene_id == scene.id).first()
                 if not existing_rule:
                     # 新规则：入库
@@ -2034,20 +2068,32 @@ def init_default_scene_and_rules():
         default_scene = Scene(name="SPN", description="默认SPN场景")
         db.add(default_scene)
         db.flush()  # 获取 scene.id
-        # 创建默认规则配置（来自 config/rule.json）
+        # 创建默认规则配置（来自 config/rule.json），先检查是否已存在防重复
         default_rule = load_rule()
-        rule_config = RuleConfig(
-            scene_id=default_scene.id,
-            annotate_fields=json.dumps(
+        existing_rc = db.query(RuleConfig).filter(RuleConfig.scene_id == default_scene.id).first()
+        if existing_rc:
+            existing_rc.annotate_fields = json.dumps(
                 default_rule.get("annotate_fields", []), ensure_ascii=False
-            ),
-            answer_field=default_rule.get("answer_field", "人工标注答案"),
-            result_label_field=default_rule.get("result_label_field", "大模型标注答案"),
-            excel_fields=json.dumps(
+            )
+            existing_rc.answer_field = default_rule.get("answer_field", "人工标注答案")
+            existing_rc.result_label_field = default_rule.get("result_label_field", "大模型标注答案")
+            existing_rc.excel_fields = json.dumps(
                 default_rule.get("excel_fields", []), ensure_ascii=False
-            ),
-        )
-        db.add(rule_config)
+            )
+            existing_rc.updated_at = datetime.utcnow()
+        else:
+            rule_config = RuleConfig(
+                scene_id=default_scene.id,
+                annotate_fields=json.dumps(
+                    default_rule.get("annotate_fields", []), ensure_ascii=False
+                ),
+                answer_field=default_rule.get("answer_field", "人工标注答案"),
+                result_label_field=default_rule.get("result_label_field", "大模型标注答案"),
+                excel_fields=json.dumps(
+                    default_rule.get("excel_fields", []), ensure_ascii=False
+                ),
+            )
+            db.add(rule_config)
         db.commit()
         print("[init] 已创建默认SPN场景及规则配置")
     except Exception as exc:
@@ -2251,7 +2297,11 @@ async def save_rule_by_scene(scene_id: int, request: Request):
         result_label_field = (parsed.get("result_label_field") or "").strip()
         excel_fields = parsed.get("excel_fields", [])
 
-        rule = db.query(RuleConfig).filter(RuleConfig.scene_id == scene_id).first()
+        # NULL 防护：scene_id 为 None 时 SQL = NULL 不匹配，需用 is_(None)
+        if scene_id is None:
+            rule = db.query(RuleConfig).filter(RuleConfig.scene_id.is_(None)).first()
+        else:
+            rule = db.query(RuleConfig).filter(RuleConfig.scene_id == scene_id).first()
         if rule:
             rule.annotate_fields = json.dumps(annotate_fields, ensure_ascii=False)
             rule.answer_field = answer_field or None
@@ -2502,31 +2552,7 @@ def execute_workbench_annotation_task(workbench_task_id: str, override_row_ids: 
         success_count = 0
         failed_count = 0
         is_multi_prompt = len(prompt_data_list) > 1
-        counter_lock = Lock()  # 保护 success_count / failed_count 和 current_row_ids
-
-        def _update_current_row_ids(add_id=None, remove_id=None):
-            """线程安全地更新任务当前正在标注的行ID列表"""
-            _db = SessionLocal()
-            try:
-                _task = _db.query(AnnotationTask).filter(AnnotationTask.id == workbench_task_id).first()
-                if not _task:
-                    return
-                try:
-                    current_ids = json.loads(_task.current_row_id) if _task.current_row_id else []
-                    if not isinstance(current_ids, list):
-                        current_ids = [current_ids] if current_ids else []
-                except (json.JSONDecodeError, TypeError):
-                    current_ids = []
-                if add_id is not None and add_id not in current_ids:
-                    current_ids.append(add_id)
-                if remove_id is not None and remove_id in current_ids:
-                    current_ids.remove(remove_id)
-                _task.current_row_id = json.dumps(current_ids) if current_ids else None
-                _db.commit()
-            except Exception:
-                pass
-            finally:
-                _db.close()
+        counter_lock = Lock()  # 保护 success_count / failed_count
 
         def annotate_single_row(row_dict):
             """标注单行 - 在线程池中执行，接收纯 dict 而非 ORM 对象"""
@@ -2551,9 +2577,8 @@ def execute_workbench_annotation_task(workbench_task_id: str, override_row_ids: 
                 human_answer = row_dict.get('human_answer') or ''
                 row_start = time.time()
         
-                # 标记当前正在标注的行
-                with counter_lock:
-                    _update_current_row_ids(add_id=row_id)
+                # 标记当前正在标注的行（内存操作，自带线程锁）
+                _update_current_row_ids(task_id=workbench_task_id, add_id=row_id)
         
                 # 从完整行数据中提取标注字段
                 row_data_for_annotate = {k: row_data_full.get(k) for k in annotate_field_list}
@@ -2572,17 +2597,17 @@ def execute_workbench_annotation_task(workbench_task_id: str, override_row_ids: 
                                 human_answer, label or ""
                             ) if label else "UNKNOWN"
                             row_elapsed_ms = int((time.time() - row_start) * 1000)
-                            ann_result = AnnotationResult(
+                            upsert_annotation_result(
+                                _db_write,
                                 task_id=workbench_task_id,
                                 row_id=row_id,
-                                model_name=model_name_for_release,
                                 prompt_name="__default__",
+                                model_name=model_name_for_release,
                                 result=json.dumps(result, ensure_ascii=False),
                                 label=label,
                                 match_type=match_type,
                                 duration_ms=row_elapsed_ms,
                             )
-                            _db_write.add(ann_result)
                             with counter_lock:
                                 success_count += 1
 
@@ -2604,17 +2629,17 @@ def execute_workbench_annotation_task(workbench_task_id: str, override_row_ids: 
                             ) if label else "UNKNOWN"
                             row_elapsed_ms = int((time.time() - row_start) * 1000)
 
-                            ann_result = AnnotationResult(
+                            upsert_annotation_result(
+                                _db_write,
                                 task_id=workbench_task_id,
                                 row_id=row_id,
-                                model_name=model_name_for_release,
                                 prompt_name=single_prompt['name'],
+                                model_name=model_name_for_release,
                                 result=json.dumps(result, ensure_ascii=False),
                                 label=label,
                                 match_type=match_type,
                                 duration_ms=row_elapsed_ms,
                             )
-                            _db_write.add(ann_result)
                             with counter_lock:
                                 success_count += 1
 
@@ -2638,16 +2663,16 @@ def execute_workbench_annotation_task(workbench_task_id: str, override_row_ids: 
                                 per_role_labels.append(label)
 
                                 # 存储每个角色的独立标注结果
-                                role_result = AnnotationResult(
+                                upsert_annotation_result(
+                                    _db_write,
                                     task_id=workbench_task_id,
                                     row_id=row_id,
-                                    model_name=model_name_for_release,
                                     prompt_name=prompt_dict['name'],
+                                    model_name=model_name_for_release,
                                     result=json.dumps(result, ensure_ascii=False),
                                     label=label,
                                     match_type=role_match_type,
                                 )
-                                _db_write.add(role_result)
 
                             # 合并判断规则：全"是"才"是"，任一"否"即"否"
                             normalized_labels = [
@@ -2669,33 +2694,33 @@ def execute_workbench_annotation_task(workbench_task_id: str, override_row_ids: 
                             row_elapsed_ms = int((time.time() - row_start) * 1000)
 
                             # 存储合并结果（prompt_name 标记为 __merged__）
-                            merged_result = AnnotationResult(
+                            upsert_annotation_result(
+                                _db_write,
                                 task_id=workbench_task_id,
                                 row_id=row_id,
-                                model_name=model_name_for_release,
                                 prompt_name="__merged__",
+                                model_name=model_name_for_release,
                                 label=merged_label,
                                 merged_label=merged_label,
                                 match_type=merged_match_type,
                                 duration_ms=row_elapsed_ms,
                             )
-                            _db_write.add(merged_result)
                             with counter_lock:
                                 success_count += 1
 
                     except Exception as row_exc:
                         # 单行标注失败，记录错误但继续其他行
                         row_elapsed_ms = int((time.time() - row_start) * 1000)
-                        error_result = AnnotationResult(
+                        upsert_annotation_result(
+                            _db_write,
                             task_id=workbench_task_id,
                             row_id=row_id,
-                            model_name=model_name_for_release,
                             prompt_name="__error__",
+                            model_name=model_name_for_release,
                             error=str(row_exc),
                             match_type="UNKNOWN",
                             duration_ms=row_elapsed_ms,
                         )
-                        _db_write.add(error_result)
                         with counter_lock:
                             failed_count += 1
 
@@ -2703,9 +2728,8 @@ def execute_workbench_annotation_task(workbench_task_id: str, override_row_ids: 
                 finally:
                     _db_write.close()
 
-                # 该行标注完成，从当前标注行ID列表中移除
-                with counter_lock:
-                    _update_current_row_ids(remove_id=row_id)
+                # 该行标注完成，从当前标注行ID列表中移除（内存操作，自带线程锁）
+                _update_current_row_ids(task_id=workbench_task_id, remove_id=row_id)
 
             finally:
                 GLOBAL_ANNOTATION_SEMAPHORE.release()
@@ -2769,16 +2793,14 @@ def execute_workbench_annotation_task(workbench_task_id: str, override_row_ids: 
             unknown_count = sum(1 for r in final_results if r.match_type == "UNKNOWN")
             valid_count = len(final_results) - unknown_count
 
-            # 更新任务统计字段
+            # 更新任务统计字段（统计指标已改为动态聚合，不再写入DB）
             if task_to_update:
-                task_to_update.accuracy = ratio(tp_count + tn_count, valid_count)
-                task_to_update.recall = ratio(tp_count, tp_count + fn_count)
-                task_to_update.precision_ = ratio(tp_count, tp_count + fp_count)
-                task_to_update.f1_score = ratio(2 * tp_count, 2 * tp_count + fp_count + fn_count)
                 task_to_update.status = "success"
                 task_to_update.finished_at = datetime.utcnow()
                 task_to_update.duration_ms = int((time.time() - task_start) * 1000)
-                task_to_update.current_row_id = None
+                task_to_update.current_row_id = None  # DB持久化清理（运行中不再频繁写DB）
+                with TASK_CURRENT_ROWS_LOCK:
+                    TASK_CURRENT_ROWS.pop(str(workbench_task_id), None)
             db.commit()
         finally:
             db.close()
@@ -2795,13 +2817,28 @@ def execute_workbench_annotation_task(workbench_task_id: str, override_row_ids: 
                 failed_task.error = str(task_exc)
                 failed_task.finished_at = datetime.utcnow()
                 failed_task.duration_ms = int((time.time() - task_start) * 1000)
-                failed_task.current_row_id = None
+                failed_task.current_row_id = None  # DB持久化清理
+                with TASK_CURRENT_ROWS_LOCK:
+                    TASK_CURRENT_ROWS.pop(str(workbench_task_id), None)
                 db.commit()
         finally:
             db.close()
     finally:
         # 释放调度器占用的并发槽位
         release_scheduled_task(workbench_task_id, model_name_for_release)
+
+
+# ---------------------------------------------------------------------------
+# 辅助函数 — 内存维护 current_row_ids
+# ---------------------------------------------------------------------------
+def _update_current_row_ids(task_id: str, add_id=None, remove_id=None):
+    """线程安全地更新任务当前正在标注的行ID列表（内存操作，不写DB）"""
+    with TASK_CURRENT_ROWS_LOCK:
+        current = TASK_CURRENT_ROWS.setdefault(task_id, set())
+        if add_id is not None:
+            current.add(add_id)
+        if remove_id is not None:
+            current.discard(remove_id)
 
 
 # ---------------------------------------------------------------------------
@@ -2864,7 +2901,24 @@ async def workbench_get_rows(
         if active_task:
             if active_task.row_data:
                 try:
-                    active_target_row_ids = set(json.loads(active_task.row_data))
+                    parsed_row_data = json.loads(active_task.row_data)
+                    if isinstance(parsed_row_data, list):
+                        # 格式2：JSON list = 指定 row_ids
+                        active_target_row_ids = set(parsed_row_data)
+                    elif isinstance(parsed_row_data, dict) and ("row_start" in parsed_row_data or "row_end" in parsed_row_data):
+                        # 格式3：JSON object {row_start, row_end} = 按 row_index 范围筛选
+                        # 需要查询数据库获取对应范围内的实际行ID
+                        range_q = db.query(ExcelRow.id).filter(ExcelRow.file_id == active_task.file_id)
+                        rs = parsed_row_data.get("row_start")
+                        re_ = parsed_row_data.get("row_end")
+                        if rs is not None:
+                            range_q = range_q.filter(ExcelRow.row_index >= int(rs))
+                        if re_ is not None:
+                            range_q = range_q.filter(ExcelRow.row_index <= int(re_))
+                        active_target_row_ids = set(r.id for r in range_q.all())
+                    else:
+                        # 格式1：null 或无法识别 → 全量
+                        active_target_row_ids = None
                 except Exception:
                     active_target_row_ids = None
             # 批量查该任务所有标注结果
@@ -2912,16 +2966,11 @@ async def workbench_get_rows(
                     if active_target_row_ids is None or row_id in active_target_row_ids:
                         return "任务创建中"
                 elif active_task.status == "running":
-                    # 当前正在标注的行显示"标注中"（支持 JSON 数组和单值两种格式）
-                    if active_task.current_row_id is not None:
-                        try:
-                            current_ids = json.loads(str(active_task.current_row_id))
-                            if not isinstance(current_ids, list):
-                                current_ids = [current_ids]
-                        except (json.JSONDecodeError, TypeError, ValueError):
-                            current_ids = [active_task.current_row_id]
-                        if row_id in current_ids:
-                            return "标注中"
+                    # 从内存读取当前正在标注的行ID
+                    with TASK_CURRENT_ROWS_LOCK:
+                        current_ids = TASK_CURRENT_ROWS.get(str(active_task.id), set())
+                    if row_id in current_ids:
+                        return "标注中"
                     if row_id in active_error_row_ids:
                         return "失败"
                     elif row_id in active_annotated_row_ids:
@@ -3076,7 +3125,10 @@ async def workbench_start_annotation(request: Request):
             if existing_task.row_data:
                 try:
                     existing_target_ids = json.loads(existing_task.row_data)
-                    if not isinstance(existing_target_ids, list):
+                    # dict 格式表示按范围筛选（如 {row_start, row_end}），无法合并 row_ids，视同全量
+                    if isinstance(existing_target_ids, dict):
+                        existing_target_ids = None
+                    elif not isinstance(existing_target_ids, list):
                         existing_target_ids = [existing_target_ids]
                 except (json.JSONDecodeError, TypeError):
                     existing_target_ids = []
@@ -3294,6 +3346,39 @@ async def workbench_list_tasks(
         ).order_by(AnnotationTask.created_at.desc()).all()
 
         from sqlalchemy import func as sa_func
+
+        # 批量预查询所有任务的统计指标（避免 N+1）
+        task_ids_all = [t.id for t in tasks]
+        _stats_cache: dict = {}
+        if task_ids_all:
+            _all_ann_results = db.query(AnnotationResult).filter(
+                AnnotationResult.task_id.in_(task_ids_all),
+                AnnotationResult.match_type.isnot(None),
+            ).all()
+            # 按 task_id 分组，先尝试 __merged__，否则排除 __error__
+            from collections import defaultdict
+            _by_task_merged: dict = defaultdict(list)
+            _by_task_other: dict = defaultdict(list)
+            for _r in _all_ann_results:
+                if _r.prompt_name == "__merged__":
+                    _by_task_merged[_r.task_id].append(_r)
+                elif _r.prompt_name != "__error__":
+                    _by_task_other[_r.task_id].append(_r)
+            for _tid in task_ids_all:
+                _rs = _by_task_merged[_tid] if _by_task_merged[_tid] else _by_task_other[_tid]
+                _tp = sum(1 for _r in _rs if _r.match_type == "TP")
+                _fn = sum(1 for _r in _rs if _r.match_type == "FN")
+                _fp = sum(1 for _r in _rs if _r.match_type == "FP")
+                _tn = sum(1 for _r in _rs if _r.match_type == "TN")
+                _unk = sum(1 for _r in _rs if _r.match_type not in ("TP", "FN", "FP", "TN"))
+                _valid = len(_rs) - _unk
+                _stats_cache[_tid] = {
+                    "accuracy": ratio(_tp + _tn, _valid),
+                    "recall": ratio(_tp, _tp + _fn),
+                    "precision": ratio(_tp, _tp + _fp),
+                    "f1_score": ratio(2 * _tp, 2 * _tp + _fp + _fn),
+                }
+
         task_list = []
         for t in tasks:
             sc = t.success_count or 0
@@ -3333,14 +3418,14 @@ async def workbench_list_tasks(
                 "total_rows": t.total_rows,
                 "success_count": sc,
                 "failed_count": fc,
-                "accuracy": t.accuracy,
-                "recall": t.recall,
-                "precision": t.precision_,
-                "f1_score": t.f1_score,
+                "accuracy": _stats_cache.get(t.id, {}).get("accuracy"),
+                "recall": _stats_cache.get(t.id, {}).get("recall"),
+                "precision": _stats_cache.get(t.id, {}).get("precision"),
+                "f1_score": _stats_cache.get(t.id, {}).get("f1_score"),
                 "status": t.status,
                 "error": t.error,
                 "duration_ms": computed_duration_ms,
-                "current_row_id": t.current_row_id,
+                "current_row_id": json.dumps(list(TASK_CURRENT_ROWS.get(str(t.id), set()))) if TASK_CURRENT_ROWS.get(str(t.id)) else None,
                 "created_at": t.created_at.isoformat() if t.created_at else None,
                 "started_at": t.started_at.isoformat() if t.started_at else None,
                 "finished_at": t.finished_at.isoformat() if t.finished_at else None,
@@ -3349,13 +3434,8 @@ async def workbench_list_tasks(
             item = task_list[-1]
             if t.status in ('running', 'pending'):
                 completed_count = sc
-                annotating_count = 0
-                if t.current_row_id:
-                    try:
-                        cur_ids = json.loads(t.current_row_id)
-                        annotating_count = len(cur_ids) if isinstance(cur_ids, list) else 0
-                    except (json.JSONDecodeError, TypeError):
-                        annotating_count = 0
+                with TASK_CURRENT_ROWS_LOCK:
+                    annotating_count = len(TASK_CURRENT_ROWS.get(str(t.id), set()))
                 failed_rows = fc
                 queuing_count = max(0, (t.total_rows or 0) - completed_count - annotating_count - failed_rows)
                 item["annotating_count"] = annotating_count
@@ -3410,10 +3490,10 @@ async def workbench_task_status(
                 "success_count": sc,
                 "failed_count": fc,
                 "total_rows": t.total_rows,
-                "accuracy": t.accuracy,
+                "accuracy": calc_task_stats(str(t.id), db).get("accuracy"),
                 "error": t.error,
                 "finished_at": t.finished_at.isoformat() if t.finished_at else None,
-                "current_row_id": t.current_row_id,
+                "current_row_id": json.dumps(list(TASK_CURRENT_ROWS.get(str(t.id), set()))) if TASK_CURRENT_ROWS.get(str(t.id)) else None,
             })
 
         return {"tasks": result_tasks}
@@ -3555,7 +3635,6 @@ async def upload_excel_file(
 
             db.add(ExcelRow(
                 file_id=excel_file.id,
-                file_name=file.filename,
                 row_index=int(idx),
                 data=json.dumps(row_dict, ensure_ascii=False, default=str),
                 human_answer=human_answer if human_answer else None,
@@ -4457,16 +4536,24 @@ async def list_error_books(
             query = query.filter(ErrorBook.cot_name == cot_name)
         if search:
             search_pattern = f"%{search}%"
-            query = query.filter(
+            # 同时搜索 original_data 和关联的 ExcelRow.data
+            query = query.outerjoin(ExcelRow, ErrorBook.row_id == ExcelRow.id).filter(
                 or_(
                     ErrorBook.original_data.like(search_pattern),
                     ErrorBook.expected_answer.like(search_pattern),
                     ErrorBook.actual_output.like(search_pattern),
                     ErrorBook.error_reason.like(search_pattern),
+                    ExcelRow.data.like(search_pattern),
                 )
             )
         total = query.count()
         items = query.order_by(ErrorBook.id.desc()).offset((page - 1) * size).limit(size).all()
+        # 批量通过 row_id JOIN excel_rows 获取 original_data
+        _er_ids = [e.row_id for e in items if e.row_id]
+        _er_data_map = {}
+        if _er_ids:
+            for er in db.query(ExcelRow).filter(ExcelRow.id.in_(_er_ids)).all():
+                _er_data_map[er.id] = er.data
         return {
             "items": [
                 {
@@ -4474,7 +4561,7 @@ async def list_error_books(
                     "scene_id": e.scene_id,
                     "file_id": e.file_id,
                     "cot_name": e.cot_name or "",
-                    "original_data": e.original_data or "",
+                    "original_data": _er_data_map.get(e.row_id, e.original_data or "") if e.row_id else (e.original_data or ""),
                     "expected_answer": e.expected_answer or "",
                     "actual_output": e.actual_output or "",
                     "error_reason": e.error_reason or "",
@@ -4498,23 +4585,28 @@ async def create_error_book(request: Request):
     scene_id = body.get("scene_id")
     file_id = body.get("file_id")
     cot_name = (body.get("cot_name") or "").strip()
-    original_data = body.get("original_data", "")
+    row_id = body.get("row_id") or None
     expected_answer = (body.get("expected_answer") or "").strip()
     actual_output = (body.get("actual_output") or "").strip()
     error_reason = (body.get("error_reason") or "").strip()
     if not scene_id:
         raise HTTPException(status_code=400, detail="scene_id 不能为空")
 
-    # original_data 存为JSON字符串
-    if isinstance(original_data, (dict, list)):
-        original_data = json.dumps(original_data, ensure_ascii=False)
+    # 有 row_id 时不写入 original_data（通过 JOIN 获取）；无 row_id 时保留独立存储
+    original_data_value = None
+    if not row_id:
+        original_data_value = body.get("original_data", "")
+        if isinstance(original_data_value, (dict, list)):
+            original_data_value = json.dumps(original_data_value, ensure_ascii=False)
+        original_data_value = original_data_value or None
     db = SessionLocal()
     try:
         eb = ErrorBook(
             scene_id=scene_id,
             file_id=file_id or None,
             cot_name=cot_name or None,
-            original_data=original_data or None,
+            row_id=row_id,
+            original_data=original_data_value,
             expected_answer=expected_answer or None,
             actual_output=actual_output or None,
             error_reason=error_reason or None,
@@ -4522,12 +4614,17 @@ async def create_error_book(request: Request):
         db.add(eb)
         db.commit()
         db.refresh(eb)
+        # 返回时使用降级策略获取 original_data
+        _resolved_od = eb.original_data or ""
+        if eb.row_id:
+            _row = db.query(ExcelRow).filter(ExcelRow.id == eb.row_id).first()
+            _resolved_od = _row.data if _row else (eb.original_data or "")
         return {
             "id": eb.id,
             "scene_id": eb.scene_id,
             "file_id": eb.file_id,
             "cot_name": eb.cot_name or "",
-            "original_data": eb.original_data or "",
+            "original_data": _resolved_od,
             "expected_answer": eb.expected_answer or "",
             "actual_output": eb.actual_output or "",
             "error_reason": eb.error_reason or "",
@@ -4567,12 +4664,17 @@ async def update_error_book(error_id: int, request: Request):
             eb.cot_name = body["cot_name"] or None
         db.commit()
         db.refresh(eb)
+        # 返回时使用降级策略获取 original_data
+        _resolved_od = eb.original_data or ""
+        if eb.row_id:
+            _row = db.query(ExcelRow).filter(ExcelRow.id == eb.row_id).first()
+            _resolved_od = _row.data if _row else (eb.original_data or "")
         return {
             "id": eb.id,
             "scene_id": eb.scene_id,
             "file_id": eb.file_id,
             "cot_name": eb.cot_name or "",
-            "original_data": eb.original_data or "",
+            "original_data": _resolved_od,
             "expected_answer": eb.expected_answer or "",
             "actual_output": eb.actual_output or "",
             "error_reason": eb.error_reason or "",
@@ -4890,6 +4992,12 @@ async def export_zip(model: str = Query(...)):
             raise HTTPException(status_code=400, detail="model is required")
 
         rows = db.query(ExcelRow).order_by(ExcelRow.id).all()
+        # 批量通过 file_id JOIN excel_files 获取 file_name
+        _ef_ids = list({r.file_id for r in rows if r.file_id})
+        _ef_name_map = {}
+        if _ef_ids:
+            for ef in db.query(ExcelFile).filter(ExcelFile.id.in_(_ef_ids)).all():
+                _ef_name_map[ef.id] = ef.file_name
         records = []
         for r in rows:
             data_dict = json.loads(r.data) if r.data else {}
@@ -4900,7 +5008,7 @@ async def export_zip(model: str = Query(...)):
             )
             record = {
                 "id": r.id,
-                "file_name": r.file_name,
+                "file_name": _ef_name_map.get(r.file_id, "") or r.file_name or "",
                 "row_index": r.row_index,
                 "human_answer": r.human_answer,
                 "created_at": r.created_at.isoformat() if r.created_at else None,
@@ -4942,7 +5050,7 @@ async def export_zip(model: str = Query(...)):
 
         total = db.query(ExcelRow).count()
         stats_payload = build_stats_payload(total, all_anns, model, [model])
-        source_file_name = resolve_export_source_file_name(rows)
+        source_file_name = resolve_export_source_file_name(rows, db)
 
         export_meta = {
             "exported_at": datetime.utcnow().isoformat(),
@@ -5217,10 +5325,10 @@ async def list_tasks(
                 "total_rows": t.total_rows,
                 "success_count": t.success_count,
                 "failed_count": t.failed_count,
-                "accuracy": t.accuracy,
-                "recall": t.recall,
-                "precision": t.precision_,
-                "f1_score": t.f1_score,
+                "accuracy": calc_task_stats(str(t.id), db).get("accuracy"),
+                "recall": calc_task_stats(str(t.id), db).get("recall"),
+                "precision": calc_task_stats(str(t.id), db).get("precision"),
+                "f1_score": calc_task_stats(str(t.id), db).get("f1_score"),
                 "status": t.status,
                 "created_at": t.created_at.isoformat() if t.created_at else None,
                 "finished_at": t.finished_at.isoformat() if t.finished_at else None,
@@ -5234,14 +5342,9 @@ async def list_tasks(
                     .filter(AnnotationResult.prompt_name != "__error__")
                     .scalar() or 0
                 )
-                # 标注中数：current_row_id JSON 数组长度
-                annotating_count = 0
-                if t.current_row_id:
-                    try:
-                        cur_ids = json.loads(t.current_row_id)
-                        annotating_count = len(cur_ids) if isinstance(cur_ids, list) else 0
-                    except (json.JSONDecodeError, TypeError):
-                        annotating_count = 0
+                # 标注中数：从内存读取
+                with TASK_CURRENT_ROWS_LOCK:
+                    annotating_count = len(TASK_CURRENT_ROWS.get(str(t.id), set()))
                 # 失败数：标注结果中 prompt_name == '__error__' 的不重复 row_id 数量
                 failed_rows = (
                     db.query(func.count(distinct(AnnotationResult.row_id)))
@@ -5283,6 +5386,7 @@ async def compare_tasks(
             raise HTTPException(status_code=404, detail="未找到对应的任务")
 
         def _task_stats(t: AnnotationTask) -> dict:
+            _s = calc_task_stats(str(t.id), db)
             return {
                 "id": t.id,
                 "model_name": t.model_name,
@@ -5291,10 +5395,10 @@ async def compare_tasks(
                 "total_rows": t.total_rows,
                 "success_count": t.success_count,
                 "failed_count": t.failed_count,
-                "accuracy": t.accuracy,
-                "recall": t.recall,
-                "precision": t.precision_,
-                "f1_score": t.f1_score,
+                "accuracy": _s.get("accuracy"),
+                "recall": _s.get("recall"),
+                "precision": _s.get("precision"),
+                "f1_score": _s.get("f1_score"),
                 "status": t.status,
             }
 
@@ -5349,6 +5453,7 @@ async def task_detail(
             total_duration_ms = task.duration_ms
 
         # 任务基本信息
+        _task_dyn_stats = calc_task_stats(str(task.id), db)
         task_info = {
             "id": task.id,
             "file_id": task.file_id,
@@ -5361,10 +5466,10 @@ async def task_detail(
             "annotated_count": annotated_count,
             "success_count": success_count,
             "failed_count": failed_count,
-            "accuracy": task.accuracy,
-            "recall": task.recall,
-            "precision": task.precision_,
-            "f1_score": task.f1_score,
+            "accuracy": _task_dyn_stats.get("accuracy"),
+            "recall": _task_dyn_stats.get("recall"),
+            "precision": _task_dyn_stats.get("precision"),
+            "f1_score": _task_dyn_stats.get("f1_score"),
             "tp_count": tp_count,
             "tn_count": tn_count,
             "fp_count": fp_count,

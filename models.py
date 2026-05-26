@@ -51,7 +51,8 @@ class ExcelRow(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     file_id = Column(Integer, ForeignKey("excel_files.id"), nullable=True)
-    file_name = Column(String, nullable=True)        # 兼容旧逻辑保留
+    # [DEPRECATED] 冗余字段，通过 file_id JOIN excel_files 获取
+    file_name = Column(String, nullable=True)
     row_index = Column(Integer, nullable=False)
     data = Column(Text, nullable=False)              # JSON
     human_answer = Column(String, nullable=True)
@@ -72,29 +73,30 @@ class AnnotationTask(Base):
     id = Column(String(36), primary_key=True)        # UUID
     file_id = Column(Integer, ForeignKey("excel_files.id"), nullable=True)
     scene_id = Column(Integer, ForeignKey("scenes.id"), nullable=True)
-    row_id = Column(Integer, nullable=True)          # 兼容旧字段
+    # [DEPRECATED] 以下字段已废弃，不再读写，仅保留数据库兼容
+    row_id = Column(Integer, nullable=True)
+    prompt_version = Column(String, nullable=True)
+    result = Column(Text, nullable=True)
+    label = Column(String, nullable=True)
+    match_type = Column(String, nullable=True)
     model_name = Column(String, nullable=False, default="")
     model_config = Column(String, nullable=False, default="")
     strategy = Column(String, nullable=False, default="方案A")
     prompt_names = Column(Text, nullable=True)       # JSON
-    prompt_version = Column(String, nullable=True)   # 兼容旧字段
     concurrency = Column(Integer, nullable=False, default=1)
     total_rows = Column(Integer, default=0)
     success_count = Column(Integer, default=0)
     failed_count = Column(Integer, default=0)
+    # [DEPRECATED] 以下统计字段已改为动态聚合，不再写入，保留字段仅为 SQLite 兼容
     accuracy = Column(Float, nullable=True)
     recall = Column(Float, nullable=True)
     precision_ = Column(Float, nullable=True)
     f1_score = Column(Float, nullable=True)
     status = Column(String, nullable=False, default="pending")
     error = Column(Text, nullable=True)
-    # 兼容旧逻辑保留字段
-    row_data = Column(Text, nullable=True)
-    prompts = Column(Text, nullable=True)
-    knowledge = Column(Text, nullable=True)
-    result = Column(Text, nullable=True)
-    label = Column(String, nullable=True)
-    match_type = Column(String, nullable=True)
+    row_data = Column(Text, nullable=True)             # 现役：存储标注目标行ID列表 [101,102,103]
+    prompts = Column(Text, nullable=True)              # 现役：标注时读取 Prompt 配置
+    knowledge = Column(Text, nullable=True)            # 现役：知识库配置
     duration_ms = Column(Integer, nullable=True)
     current_row_id = Column(Text, nullable=True)    # 当前正在标注的行ID列表（JSON数组）
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -129,6 +131,7 @@ class AnnotationResult(Base):
     __table_args__ = (
         Index("ix_annotation_results_task_id_row_id", "task_id", "row_id"),
         Index("ix_annotation_results_row_id_model_name", "row_id", "model_name"),
+        UniqueConstraint("task_id", "row_id", "prompt_name", name="uq_task_row_prompt"),
     )
 
 
@@ -198,6 +201,7 @@ class ErrorBook(Base):
     file_id = Column(Integer, ForeignKey("excel_files.id"), nullable=True)
     cot_name = Column(String, nullable=True)
     row_id = Column(Integer, ForeignKey("excel_rows.id"), nullable=True)
+    # 当 row_id 非空时通过 JOIN excel_rows.data 获取；row_id 为空时作为独立存储
     original_data = Column(Text, nullable=True)      # JSON
     expected_answer = Column(String, nullable=True)
     actual_output = Column(String, nullable=True)

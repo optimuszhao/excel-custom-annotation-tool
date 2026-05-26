@@ -1,0 +1,1 @@
+{"id": 1, "cot_name": "上火事故", "original_data": "收拾收拾", "expected_answer": "1", "actual_output": "2", "error_reason": "3", "created_at": "2026-05-25T01:00:55.476220"}

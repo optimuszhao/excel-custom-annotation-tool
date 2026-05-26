@@ -4,8 +4,7 @@
     "chat_question",
     "chat_answer",
     "api调用记录1",
-    "api调用记录2",
-    "cot名称"
+    "api调用记录2"
   ],
   "annotate_fields": [
     "chat_question",

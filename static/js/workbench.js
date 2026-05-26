@@ -343,12 +343,17 @@ async function loadTableData() {
         // 从返回数据的第一行收集所有字段 key 作为全量列
         const allFieldKeys = items.length > 0 ? Object.keys(items[0].data || {}) : tableColumns;
         // 列初始化（如果 allColumns 为空、列集合有变化、或显示列配置变化）
-        const allFieldStr = allFieldKeys.join(',');
-        const prevFieldStr = allColumns.filter(c => c.type === 'data').map(c => c.key).join(',');
-        const prevVisibleStr = [...visibleColumns].filter(k => !k.startsWith('__')).sort().join(',');
-        const newVisibleStr = (tableColumns || []).slice().sort().join(',');
-        if (allColumns.length === 0 || prevFieldStr !== allFieldStr || prevVisibleStr !== newVisibleStr) {
-            initColumns(allFieldKeys, tableColumns);
+        // 当列选择器面板打开时，跳过列重新初始化，避免覆盖用户正在进行的勾选操作
+        const columnSelectorEl = document.getElementById('column-selector');
+        const isColumnSelectorOpen = columnSelectorEl && columnSelectorEl.style.display !== 'none';
+        if (!isColumnSelectorOpen) {
+            const allFieldStr = allFieldKeys.join(',');
+            const prevFieldStr = allColumns.filter(c => c.type === 'data').map(c => c.key).join(',');
+            const prevVisibleStr = [...visibleColumns].filter(k => !k.startsWith('__')).sort().join(',');
+            const newVisibleStr = (tableColumns || []).slice().sort().join(',');
+            if (allColumns.length === 0 || prevFieldStr !== allFieldStr || prevVisibleStr !== newVisibleStr) {
+                initColumns(allFieldKeys, tableColumns);
+            }
         }
 
         // 更新返回的 effective_task_id（首次可能自动赋值最新任务）
