@@ -1128,27 +1128,39 @@ async def save_display_columns_to_rule(request: Request):
     if scene_id:
         db = SessionLocal()
         try:
+            scene_name_for_file = None
+            scene_obj = db.query(Scene).filter(Scene.id == scene_id).first()
+            if scene_obj:
+                scene_name_for_file = scene_obj.name
+
             # NULL 防护：scene_id 非空时用 == 过滤
             rule_config = db.query(RuleConfig).filter(RuleConfig.scene_id == scene_id).first()
             if rule_config:
                 rule_config.excel_fields = json.dumps(columns, ensure_ascii=False)
                 rule_config.updated_at = datetime.utcnow()
             else:
-                # 二次确认：防止并发场景下重复插入
-                if scene_id is None:
-                    existing = db.query(RuleConfig).filter(RuleConfig.scene_id.is_(None)).first()
-                    if existing:
-                        existing.excel_fields = json.dumps(columns, ensure_ascii=False)
-                        existing.updated_at = datetime.utcnow()
-                        db.commit()
-                        return {"success": True, "excel_fields": columns}
                 rule_config = RuleConfig(
                     scene_id=scene_id,
                     excel_fields=json.dumps(columns, ensure_ascii=False),
                     annotate_fields="[]",
+                    answer_field="",
+                    result_label_field="",
                 )
                 db.add(rule_config)
             db.commit()
+
+            # 同步写入 data/rules/{scene_name}.json 的 excel_fields
+            if scene_name_for_file:
+                rules_data_dir = DATA_DIR / "rules"
+                rules_data_dir.mkdir(parents=True, exist_ok=True)
+                rule_file = rules_data_dir / f"{scene_name_for_file}.json"
+                if rule_file.exists():
+                    with open(rule_file, "r", encoding="utf-8") as f:
+                        existing_data = json.load(f)
+                else:
+                    existing_data = {"annotate_fields": [], "answer_field": "", "result_label_field": ""}
+                existing_data["excel_fields"] = columns
+                rule_file.write_text(json.dumps(existing_data, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception as e:
             db.rollback()
             print(f"[warn] 同步 display-columns 到数据库失败: {e}")
@@ -3619,6 +3631,30 @@ async def upload_excel_file(
         )
         db.add(excel_file)
         db.flush()  # 获取 excel_file.id
+
+        # 若该场景没有规则配置，自动创建默认规则
+        if scene_id_int:
+            existing_rule = db.query(RuleConfig).filter(RuleConfig.scene_id == scene_id_int).first()
+            if not existing_rule:
+                new_rule = RuleConfig(
+                    scene_id=scene_id_int,
+                    excel_fields=json.dumps(columns, ensure_ascii=False),
+                    annotate_fields="[]",
+                    answer_field="",
+                    result_label_field="",
+                )
+                db.add(new_rule)
+                rules_data_dir = DATA_DIR / "rules"
+                rules_data_dir.mkdir(parents=True, exist_ok=True)
+                rule_data = {
+                    "excel_fields": columns,
+                    "annotate_fields": [],
+                    "answer_field": "",
+                    "result_label_field": "",
+                }
+                (rules_data_dir / f"{scene_name}.json").write_text(
+                    json.dumps(rule_data, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
 
         # 逐行解析插入 ExcelRow
         annotated_count = 0
