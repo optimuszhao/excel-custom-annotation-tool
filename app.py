@@ -2319,20 +2319,20 @@ async def save_rule_by_scene(scene_id: int, request: Request):
             db.add(rule)
         db.commit()
 
-        # 同步写入 config/rule.json（以当前解析后的内容为准）
+        # 同步写入 data/rules/{scene_name}.json
         rule_file_data = {
             "excel_fields": excel_fields,
             "annotate_fields": annotate_fields,
             "answer_field": answer_field,
             "result_label_field": result_label_field,
         }
-        # 保留原始 JSON 中的其他自定义字段
         for k, v in parsed.items():
             if k not in rule_file_data:
                 rule_file_data[k] = v
-        rule_path = CONFIG_DIR / "rule.json"
-        with open(rule_path, "w", encoding="utf-8") as f:
-            json.dump(rule_file_data, f, ensure_ascii=False, indent=2)
+        rules_data_dir = DATA_DIR / "rules"
+        rules_data_dir.mkdir(parents=True, exist_ok=True)
+        rule_path = rules_data_dir / f"{scene.name}.json"
+        rule_path.write_text(json.dumps(rule_file_data, ensure_ascii=False, indent=2), encoding="utf-8")
 
         return {
             "success": True,
@@ -4147,6 +4147,12 @@ async def create_prompt(request: Request):
         db.add(prompt)
         db.commit()
         db.refresh(prompt)
+
+        # 同步写入本地文件 data/prompts/{scene_name}/{name}{file_type}
+        scene_prompt_dir = DATA_DIR / "prompts" / scene.name
+        scene_prompt_dir.mkdir(parents=True, exist_ok=True)
+        (scene_prompt_dir / f"{prompt.name}{prompt.file_type or '.prompt'}").write_text(prompt.content, encoding="utf-8")
+
         return {
             "id": prompt.id,
             "name": prompt.name,
@@ -4208,6 +4214,14 @@ async def update_prompt(prompt_id: int, request: Request):
 
         db.commit()
         db.refresh(prompt)
+
+        # 同步写入本地文件 data/prompts/{scene_name}/{name}{file_type}
+        scene = db.query(Scene).filter(Scene.id == prompt.scene_id).first()
+        if scene:
+            scene_prompt_dir = DATA_DIR / "prompts" / scene.name
+            scene_prompt_dir.mkdir(parents=True, exist_ok=True)
+            (scene_prompt_dir / f"{prompt.name}{prompt.file_type or '.prompt'}").write_text(prompt.content, encoding="utf-8")
+
         return {
             "id": prompt.id,
             "name": prompt.name,
@@ -4390,10 +4404,19 @@ async def create_knowledge(request: Request):
         ).first()
         if existing:
             raise HTTPException(status_code=400, detail=f"该场景下已存在同名知识文件「{name}」")
+        scene = db.query(Scene).filter(Scene.id == scene_id).first()
         kf = KnowledgeFile(scene_id=scene_id, name=name, content=content, file_type=file_type)
         db.add(kf)
         db.commit()
         db.refresh(kf)
+
+        # 同步写入本地文件 data/knowledge/{scene_name}/{name}{file_type}
+        if scene:
+            scene_dir = DATA_DIR / "knowledge" / scene.name
+            scene_dir.mkdir(parents=True, exist_ok=True)
+            file_name = name if name.endswith((".json", ".jsonl", ".txt")) else f"{name}{file_type}"
+            (scene_dir / file_name).write_text(kf.content or "", encoding="utf-8")
+
         return {
             "id": kf.id,
             "name": kf.name,
@@ -4440,6 +4463,15 @@ async def update_knowledge(knowledge_id: int, request: Request):
             kf.file_type = body["file_type"]
         db.commit()
         db.refresh(kf)
+
+        # 同步写入本地文件 data/knowledge/{scene_name}/{name}{file_type}
+        scene = db.query(Scene).filter(Scene.id == kf.scene_id).first()
+        if scene:
+            scene_dir = DATA_DIR / "knowledge" / scene.name
+            scene_dir.mkdir(parents=True, exist_ok=True)
+            file_name = kf.name if kf.name.endswith((".json", ".jsonl", ".txt")) else f"{kf.name}{kf.file_type or '.txt'}"
+            (scene_dir / file_name).write_text(kf.content or "", encoding="utf-8")
+
         return {
             "id": kf.id,
             "name": kf.name,
