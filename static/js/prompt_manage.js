@@ -482,6 +482,11 @@ function bindKeyboardShortcuts() {
         }
     });
 
+    // 预览弹窗：点击遮罩关闭
+    document.getElementById('preview-modal').addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) closePreviewModal();
+    });
+
     // Escape 关闭弹窗
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
@@ -493,7 +498,102 @@ function bindKeyboardShortcuts() {
             if (sceneModal.style.display === 'flex') {
                 closeSceneModal();
             }
+            const previewModal = document.getElementById('preview-modal');
+            if (previewModal.style.display === 'flex') {
+                closePreviewModal();
+            }
         }
+    });
+}
+
+// ========== 预览渲染 ==========
+
+/** 打开预览弹窗（不立即渲染，等用户点"渲染"按钮） */
+function handlePreviewPrompt() {
+    if (!state.currentPromptId) {
+        showToast('请先选择一个 Prompt', 'warning');
+        return;
+    }
+    // 重置弹窗内容
+    document.getElementById('preview-original').textContent = '';
+    document.getElementById('preview-rendered').textContent = '';
+    document.getElementById('preview-missing').textContent = '';
+    // 默认选 first_row
+    document.querySelector('input[name="preview-source"][value="first_row"]').checked = true;
+
+    const modal = document.getElementById('preview-modal');
+    modal.style.display = 'flex';
+
+    // 自动触发一次渲染
+    doPreviewRender();
+}
+
+/** 关闭预览弹窗 */
+function closePreviewModal() {
+    document.getElementById('preview-modal').style.display = 'none';
+}
+
+/** 切换示例数据来源时自动重新渲染 */
+function onPreviewSourceChange() {
+    doPreviewRender();
+}
+
+/** 执行渲染请求 */
+async function doPreviewRender() {
+    if (!state.currentPromptId) return;
+    const source = document.querySelector('input[name="preview-source"]:checked')?.value || 'first_row';
+    const btn = document.getElementById('btn-preview-render');
+    const origText = btn.textContent;
+    btn.textContent = '渲染中...';
+    btn.disabled = true;
+
+    try {
+        const result = await apiPost(`/api/prompts/${state.currentPromptId}/preview`, {
+            sample_source: source,
+        });
+
+        // 左侧：原始模板（高亮占位符）
+        const prompt = state.prompts.find(p => p.id === state.currentPromptId);
+        const rawContent = prompt ? prompt.content : '';
+        document.getElementById('preview-original').innerHTML = highlightPlaceholders(escapeHtml(rawContent));
+
+        // 右侧：渲染结果
+        document.getElementById('preview-rendered').textContent = result.rendered || '';
+
+        // 未命中提示
+        const missingEl = document.getElementById('preview-missing');
+        if (result.missing_placeholders && result.missing_placeholders.length > 0) {
+            missingEl.textContent = '⚠ 未命中占位符：' + result.missing_placeholders.map(p => `{${p}}`).join('、');
+        } else {
+            missingEl.textContent = '✓ 所有占位符已成功替换';
+            missingEl.style.color = '#16a34a';
+        }
+    } catch (e) {
+        // apiRequest 已处理错误提示
+    } finally {
+        btn.textContent = origText;
+        btn.disabled = false;
+    }
+}
+
+/** 高亮占位符（对已转义的 HTML 文本操作） */
+function highlightPlaceholders(escapedHtml) {
+    return escapedHtml.replace(/\{([^{}]+)\}/g, (match, name) => {
+        let color = '#7c3aed'; // 列值默认紫色
+        if (name.startsWith('knowledge.')) color = '#0369a1';
+        else if (name.startsWith('errorbook.')) color = '#b45309';
+        return `<span style="background:#fef3c7; color:${color}; border-radius:3px; padding:0 2px; font-weight:600;">{${name}}</span>`;
+    });
+}
+
+/** 复制渲染结果 */
+function copyPreviewResult() {
+    const text = document.getElementById('preview-rendered').textContent;
+    if (!text) { showToast('暂无渲染结果', 'warning'); return; }
+    navigator.clipboard.writeText(text).then(() => {
+        showToast('已复制到剪贴板', 'success');
+    }).catch(() => {
+        showToast('复制失败，请手动选中复制', 'error');
     });
 }
 

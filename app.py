@@ -2,6 +2,7 @@
 数据飞轮 Prompt 标注调试台 — FastAPI 后端
 """
 
+from utils import render_prompt
 import json
 import math
 import hashlib
@@ -2627,10 +2628,9 @@ def execute_workbench_annotation_task(workbench_task_id: str, override_row_ids: 
                         elif not is_multi_prompt:
                             # 单 Prompt 标注
                             single_prompt = prompt_data_list[0]
-                            try:
-                                filled_prompt = single_prompt['content'].format(**row_data_for_annotate)
-                            except KeyError:
-                                filled_prompt = single_prompt['content']
+                            filled_prompt = render_prompt(
+                                single_prompt['content'], row_data_for_annotate, scene_id, _db_write
+                            )["rendered"]
 
                             result = rest_ir(
                                 filled_prompt, row_data_for_annotate, model_config_name,
@@ -2660,10 +2660,9 @@ def execute_workbench_annotation_task(workbench_task_id: str, override_row_ids: 
                             # 多 Prompt 多角色标注：每个 Prompt 独立调用，最后合并
                             per_role_labels = []
                             for prompt_dict in prompt_data_list:
-                                try:
-                                    filled_prompt = prompt_dict['content'].format(**row_data_for_annotate)
-                                except KeyError:
-                                    filled_prompt = prompt_dict['content']
+                                filled_prompt = render_prompt(
+                                    prompt_dict['content'], row_data_for_annotate, scene_id, _db_write
+                                )["rendered"]
 
                                 result = rest_ir(
                                     filled_prompt, row_data_for_annotate, model_config_name,
@@ -4338,6 +4337,73 @@ async def check_prompt(request: Request):
             "missing_fields": missing_fields,
             "warnings": warnings,
         }
+    finally:
+        db.close()
+
+
+@app.post("/api/prompts/{prompt_id}/preview")
+async def preview_prompt_render(prompt_id: int, request: Request):
+    """预览 Prompt 渲染效果：用示例数据替换占位符，返回渲染结果"""
+    body = await request.json()
+    sample_source = body.get("sample_source", "first_row")  # "first_row" | "placeholder"
+    file_id = body.get("file_id")
+
+    db = SessionLocal()
+    try:
+        prompt = db.query(Prompt).filter(Prompt.id == prompt_id).first()
+        if not prompt:
+            raise HTTPException(status_code=404, detail="Prompt不存在")
+
+        scene_id = prompt.scene_id
+
+        # 获取规则配置中的字段列表
+        rule_config = db.query(RuleConfig).filter(RuleConfig.scene_id == scene_id).first()
+        annotate_fields = []
+        excel_fields = []
+        if rule_config:
+            if rule_config.annotate_fields:
+                annotate_fields = json.loads(rule_config.annotate_fields)
+            if rule_config.excel_fields:
+                excel_fields = json.loads(rule_config.excel_fields)
+
+        row_data: dict = {}
+        if sample_source == "first_row":
+            # 取该场景第一个文件的第一行
+            target_file = None
+            if file_id:
+                target_file = db.query(ExcelFile).filter(
+                    ExcelFile.id == file_id, ExcelFile.scene_id == scene_id
+                ).first()
+            if not target_file:
+                target_file = (
+                    db.query(ExcelFile)
+                    .filter(ExcelFile.scene_id == scene_id)
+                    .order_by(ExcelFile.id.asc())
+                    .first()
+                )
+            if target_file:
+                first_row = (
+                    db.query(ExcelRow)
+                    .filter(ExcelRow.file_id == target_file.id)
+                    .order_by(ExcelRow.row_index.asc())
+                    .first()
+                )
+                if first_row and first_row.data:
+                    row_data = json.loads(first_row.data)
+
+        if not row_data:
+            # 无文件时用占位文本填充
+            all_fields = list(dict.fromkeys(annotate_fields + excel_fields))
+            row_data = {f: f"<示例值-{f}>" for f in all_fields}
+
+        # 只传 annotate_fields 范围内的行数据（与标注时保持一致）
+        if annotate_fields:
+            row_data_for_render = {k: row_data.get(k, f"<示例值-{k}>") for k in annotate_fields}
+        else:
+            row_data_for_render = row_data
+
+        result = render_prompt(prompt.content, row_data_for_render, scene_id, db)
+        return result
     finally:
         db.close()
 
