@@ -19,7 +19,7 @@ def render_prompt(template: str, row_data: dict, scene_id, db) -> dict:
         ctx_used              — 实际命中的变量 {key: value}
         missing_placeholders  — 未命中的占位符列表
     """
-    from models import KnowledgeFile, ErrorBook
+    from core.models import KnowledgeFile, ErrorBook
 
     ctx: dict = {}
 

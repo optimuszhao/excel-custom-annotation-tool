@@ -9,14 +9,15 @@ from pathlib import Path
 import pandas as pd
 
 import sys
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from database import engine, SessionLocal, Base
-from models import Scene, ExcelFile, ExcelRow, Prompt, KnowledgeFile, RuleConfig
+from core.database import engine, SessionLocal, Base
+from core.models import Scene, ExcelFile, ExcelRow, Prompt, KnowledgeFile, RuleConfig
 
-BASE_DIR = Path(__file__).resolve().parent
+# 项目根目录（core/ 的上一级）
+BASE_DIR = Path(__file__).resolve().parent.parent
 DB_PATH = BASE_DIR / "db.sqlite"
-TEST_DATA_PATH = BASE_DIR.parent / "test_data.xlsx"
+TEST_DATA_PATH = BASE_DIR / "test_data.xlsx"
 PROMPTS_DIR = BASE_DIR / "prompts"
 KNOWLEDGE_DIR = BASE_DIR / "knowledge"
 CONFIG_DIR = BASE_DIR / "config"

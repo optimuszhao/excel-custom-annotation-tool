@@ -2,7 +2,7 @@
 数据飞轮 Prompt 标注调试台 — FastAPI 后端
 """
 
-from utils import render_prompt
+from core.render import render_prompt
 import json
 import math
 import hashlib
@@ -32,9 +32,9 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import or_, func, text, distinct
 
 # 从 database 和 models 模块导入
-from database import engine, SessionLocal, get_db, Base, BASE_DIR
-from models import *
-from strategies import STRATEGIES
+from core.database import engine, SessionLocal, get_db, Base, BASE_DIR
+from core.models import *
+from user_impl import STRATEGIES
 
 # ---------------------------------------------------------------------------
 # 路径 & 目录
@@ -2428,7 +2428,7 @@ async def list_strategies():
 # ---------------------------------------------------------------------------
 # API — 模型可用性检测
 # ---------------------------------------------------------------------------
-from model_test import test_model_availability
+from user_impl import test_model as test_model_availability
 
 @app.post("/api/model/test")
 async def api_test_model(request: Request):

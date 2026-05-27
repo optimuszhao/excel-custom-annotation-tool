@@ -6,7 +6,7 @@ from sqlalchemy import (
     ForeignKey, Index, UniqueConstraint
 )
 
-from database import Base
+from core.database import Base
 
 
 # ---------------------------------------------------------------------------
